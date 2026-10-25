@@ -79,6 +79,17 @@ Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selectio
 - **MPS hang**: `infer.cube` on `device: auto` (Apple GPU) stalls at 0% CPU inside the autoregressive sampler; CPU works (10 points × 8 samples × 15 steps in 15 s). Training on MPS works. Use `device: cpu` for Mac cube smoke tests; the real runs are CUDA.
 - Mac training throughput (Kronos-small, lookback 128, batch 4, MPS): ~10 samples/s. Not a substitute for the cloud.
 
+## RunPod resources (created 2026-10-25)
+
+| Item | Value |
+|---|---|
+| Account key | `RUNPOD_API_KEY` in `/Users/streetteam/Kronos/.env` (Mac only; also used for the first pods' self-termination test via RunPod's injected pod key) |
+| Datacenter | **CA-MTL-1** (Montréal): A40 48 GB at $0.59/h, Medium stock; RTX A5000 24 GB at $0.27/h fallback. RTX 4090s were $0.89/h and Low stock in every datacenter on 2026-10-25 |
+| Network volume | `kronos-ws`, id **`stv454bk3l`**, 100 GB, mounted at `/workspace` ($7/month) |
+| Image | `runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04` |
+| Pod recipe | REST `POST /v1/pods` with `gpuTypeIds ["NVIDIA A40"]`, `cloudType SECURE`, `dataCenterIds ["CA-MTL-1"]`, `networkVolumeId stv454bk3l`, `ports ["22/tcp"]`, `dockerStartCmd` = bootstrap from the public fork + `run_job.sh` |
+| Fork | https://github.com/Simongh05/Kronos branch `btc-updown` (public; code only) |
+
 ## Open items
 
 - RunPod account, prepaid credits, API keys, network volume (user) → dry run of `cloud/run_job.sh` self-termination.

@@ -76,7 +76,7 @@ tmp/
 .python-version
 
 # btc_updown: local data, memmaps, runs
-data/
+/data/
 *.npy
 runs/
 cubes/

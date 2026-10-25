@@ -161,8 +161,8 @@ fi
 if [[ $SKIP_TESTS -eq 1 ]]; then
   log "--skip-tests: skipping pytest"
 else
-  log "smoke test: python -m pytest btc_updown/tests -q -x"
-  "$PYTHON" -m pytest btc_updown/tests -q -x
+  log "smoke test: python -m pytest btc_updown/tests -q -x (test_labels needs the research venv)"
+  "$PYTHON" -m pytest btc_updown/tests -q -x --ignore=btc_updown/tests/test_labels.py
 fi
 
 # ---------------------------------------------------------------- 6. hardware report
