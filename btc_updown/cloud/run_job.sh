@@ -269,6 +269,13 @@ curl_cfg() { # curl_cfg <output-file>   (config on stdin)
 
 terminate_pod() {
   local pod=${RUNPOD_POD_ID:-} key=${RUNPOD_TERMINATE_KEY:-${RUNPOD_API_KEY:-}}
+  # SSH shells on a pod do not inherit RunPod's injected variables; read them from the container's init process.
+  if [[ -z $pod && -r /proc/1/environ ]]; then
+    pod=$(tr '\0' '\n' </proc/1/environ | sed -n 's/^RUNPOD_POD_ID=//p' | head -1)
+  fi
+  if [[ -z $key && -r /proc/1/environ ]]; then
+    key=$(tr '\0' '\n' </proc/1/environ | sed -n 's/^RUNPOD_API_KEY=//p' | head -1)
+  fi
   local code body
   if [[ -z $pod ]]; then
     log "RUNPOD_POD_ID is not set: not running on a RunPod pod, nothing to terminate"
