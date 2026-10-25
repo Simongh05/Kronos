@@ -1,0 +1,14 @@
+# DirectHead-only cube over validation with the frozen-backbone probe head (E1b-probe). One forward per minute.
+exp_name: cube_probe_direct_val
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 0.5
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: spot_BTCUSDC, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: NeoQuasar/Kronos-small
+  head: /workspace/runs/probe_small_1m/best/head.pt
+cube: {start: "2026-08-07", end: "2026-09-07", stride_s: 60, pred_len: 15, n_samples: 1, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 256, sampling: false, direct: true, store_paths: false}
