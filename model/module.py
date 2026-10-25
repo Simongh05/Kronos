@@ -368,7 +368,15 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         self.attn_dropout_p = attn_dropout_p
         self.resid_dropout = nn.Dropout(resid_dropout)
 
-    def forward(self, query, key, value, key_padding_mask=None):
+    def forward(self, query, key, value, key_padding_mask=None, causal=None):
+        """
+        Args:
+            causal (bool, optional): Whether to apply a causal mask. ``None`` (default) keeps the
+                historical behaviour of masking only in training mode. Pass ``True`` to evaluate a
+                full training-style sequence in eval mode (e.g. a validation loss) without letting
+                position t attend to later positions. Never pass ``True`` for single-step decoding
+                (q_len == 1 against a longer key), where a causal mask would attend to key 0 only.
+        """
         batch_size, q_len, _ = query.shape
         _, seq_len, _ = key.shape
 
@@ -384,7 +392,7 @@ class MultiHeadCrossAttentionWithRoPE(nn.Module):
         else:
             attn_mask = None
 
-        is_causal_flag = self.training
+        is_causal_flag = self.training if causal is None else bool(causal)
 
         attn_output = F.scaled_dot_product_attention(
             q, k, v,
@@ -449,15 +457,17 @@ class DependencyAwareLayer(nn.Module):
         self.cross_attn = MultiHeadCrossAttentionWithRoPE(d_model, n_heads, attn_dropout_p, resid_dropout)
         self.norm = RMSNorm(d_model)
 
-    def forward(self, hidden_states, sibling_embed, key_padding_mask=None):
+    def forward(self, hidden_states, sibling_embed, key_padding_mask=None, causal=None):
         """hidden_states: [batch, seq_len, d_model]
         sibling_embed: Embedding from another subtoken
+        causal: forwarded to the cross-attention (None = training-mode default)
         """
         attn_out = self.cross_attn(
             query=sibling_embed,
             key=hidden_states,
             value=hidden_states,
-            key_padding_mask=key_padding_mask
+            key_padding_mask=key_padding_mask,
+            causal=causal,
         )
         return self.norm(hidden_states + attn_out)
 

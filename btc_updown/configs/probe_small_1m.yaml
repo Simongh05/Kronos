@@ -1,0 +1,39 @@
+# E1b-probe: frozen pretrained Kronos-small backbone, train only the DirectHead (minutes of GPU).
+exp_name: probe_small_1m
+run_dir: /workspace/runs/{exp_name}
+expected_hours: 0.5
+seed: 100
+device: auto
+bf16: true
+
+data:
+  root: /workspace/klines
+  train_series: [spot_BTCUSDC, spot_BTCUSDT, um_BTCUSDT]
+  val_series: [spot_BTCUSDC]
+  lookback: 256
+  predict: 15
+  clip: 5.0
+  train_end: "2026-08-01"
+  val_start: "2026-08-07"
+  val_end: "2026-09-07"
+  n_val_windows: 2048
+  num_workers: 6
+
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: NeoQuasar/Kronos-small
+  freeze_backbone: true
+  direct_head: true
+  head_hidden: 256
+  head_dropout: 0.1
+
+train:
+  steps: 6000
+  batch_size: 128
+  head_lr: 1.0e-3
+  weight_decay: 0.01
+  grad_clip: 3.0
+  log_every: 50
+  val_every: 1000
+  ckpt_every: 1000
+  keep_last: 2

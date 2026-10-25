@@ -1,0 +1,34 @@
+# E0: zero-shot Kronos-small sampling cube over the validation range (one decision per minute).
+exp_name: cube_e0_small_val
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 5
+seed: 100
+device: auto
+bf16: true
+
+data:
+  root: /workspace/klines
+  series: spot_BTCUSDC
+  lookback: 256
+  clip: 5.0
+
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  tokenizer_revision: null       # pin to the revision used by tests/test_kronos_regression.py for reproducibility
+  predictor: NeoQuasar/Kronos-small
+  predictor_revision: null
+  head: null                     # path to a DirectHead head.pt enables cube.direct
+
+cube:
+  start: "2026-08-07"
+  end: "2026-09-07"              # exclusive
+  stride_s: 60
+  pred_len: 15
+  n_samples: 128
+  T: 1.0
+  top_p: 1.0
+  top_k: 0
+  batch_points: 16               # 16 x 128 = 2048 sequences per autoregressive step
+  sampling: true
+  direct: false
+  store_paths: false             # tp_samples/*.npy keeps the full typical-price distribution anyway

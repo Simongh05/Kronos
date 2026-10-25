@@ -1,0 +1,11 @@
+# Mac smoke: one hour of validation, zero-shot Kronos-small, small N, MPS/CPU.
+exp_name: cube_smoke_local
+run_dir: data/cubes/{exp_name}
+expected_hours: 0.3
+seed: 100
+device: cpu
+bf16: false
+data: {root: data/klines, series: spot_BTCUSDC, lookback: 256, clip: 5.0}
+model: {tokenizer: NeoQuasar/Kronos-Tokenizer-base, predictor: NeoQuasar/Kronos-small, head: null}
+cube: {start: "2026-08-20", end: "2026-08-20T00:10:00", stride_s: 60, pred_len: 15, n_samples: 8, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 12, sampling: true, direct: false, store_paths: false}

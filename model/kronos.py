@@ -236,7 +236,7 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
         elif isinstance(module, RMSNorm):
             nn.init.ones_(module.weight)
 
-    def forward(self, s1_ids, s2_ids, stamp=None, padding_mask=None, use_teacher_forcing=False, s1_targets=None):
+    def forward(self, s1_ids, s2_ids, stamp=None, padding_mask=None, use_teacher_forcing=False, s1_targets=None, causal=None):
         """
         Args:
             s1_ids (torch.Tensor): Input tensor of s1 token IDs. Shape: [batch_size, seq_len]
@@ -245,6 +245,9 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
             padding_mask (torch.Tensor, optional): Mask for padding tokens. Shape: [batch_size, seq_len]. Defaults to None.
             use_teacher_forcing (bool, optional): Whether to use teacher forcing for s1 decoding. Defaults to False.
             s1_targets (torch.Tensor, optional): Target s1 token IDs for teacher forcing. Shape: [batch_size, seq_len]. Defaults to None.
+            causal (bool, optional): Causal masking for the s2 dependency layer. ``None`` (default) masks in
+                training mode only (historical behaviour); pass ``True`` to compute a leakage-free
+                full-sequence loss in eval mode.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]:
@@ -271,7 +274,7 @@ class Kronos(nn.Module, PyTorchModelHubMixin):
             sample_s1_ids = torch.multinomial(s1_probs.view(-1, self.s1_vocab_size), 1).view(s1_ids.shape)
             sibling_embed = self.embedding.emb_s1(sample_s1_ids)
 
-        x2 = self.dep_layer(x, sibling_embed, key_padding_mask=padding_mask) # Dependency Aware Layer: Condition on s1 embeddings
+        x2 = self.dep_layer(x, sibling_embed, key_padding_mask=padding_mask, causal=causal) # Dependency Aware Layer: Condition on s1 embeddings
         s2_logits = self.head.cond_forward(x2)
         return s1_logits, s2_logits
 
@@ -386,7 +389,16 @@ def sample_from_logits(logits, temperature=1.0, top_k=None, top_p=None, sample_l
     return x
 
 
-def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context, pred_len, clip=5, T=1.0, top_k=0, top_p=0.99, sample_count=5, verbose=False):
+def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context, pred_len, clip=5, T=1.0, top_k=0, top_p=0.99, sample_count=5, verbose=False, return_samples=False):
+    """
+    Autoregressively generates `pred_len` steps for each series in `x`, drawing `sample_count`
+    independent sample paths per series.
+
+    Returns:
+        np.ndarray: by default the mean over sample paths, shape [B, L, d_in] where L is the decoded
+        window (up to `max_context`, ending with the `pred_len` generated steps). With
+        `return_samples=True` the individual paths are returned instead, shape [B, sample_count, L, d_in].
+    """
     with torch.no_grad():
         x = torch.clip(x, -clip, clip)
 
@@ -464,6 +476,8 @@ def auto_regressive_inference(tokenizer, model, x, x_stamp, y_stamp, max_context
         z = tokenizer.decode(input_tokens, half=True)
         z = z.reshape(-1, sample_count, z.size(1), z.size(2))
         preds = z.cpu().numpy()
+        if return_samples:
+            return preds
         preds = np.mean(preds, axis=1)
 
         return preds
@@ -505,18 +519,28 @@ class KronosPredictor:
         self.tokenizer = self.tokenizer.to(self.device)
         self.model = self.model.to(self.device)
 
-    def generate(self, x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose):
+    def generate(self, x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose, return_samples=False):
 
         x_tensor = torch.from_numpy(np.array(x).astype(np.float32)).to(self.device)
         x_stamp_tensor = torch.from_numpy(np.array(x_stamp).astype(np.float32)).to(self.device)
         y_stamp_tensor = torch.from_numpy(np.array(y_stamp).astype(np.float32)).to(self.device)
 
         preds = auto_regressive_inference(self.tokenizer, self.model, x_tensor, x_stamp_tensor, y_stamp_tensor, self.max_context, pred_len,
-                                          self.clip, T, top_k, top_p, sample_count, verbose)
-        preds = preds[:, -pred_len:, :]
+                                          self.clip, T, top_k, top_p, sample_count, verbose, return_samples=return_samples)
+        if return_samples:
+            preds = preds[:, :, -pred_len:, :]   # [B, sample_count, pred_len, d_in]
+        else:
+            preds = preds[:, -pred_len:, :]      # [B, pred_len, d_in]
         return preds
 
-    def predict(self, df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True):
+    def predict(self, df, x_timestamp, y_timestamp, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True, return_samples=False):
+        """
+        Forecast `pred_len` steps for one series.
+
+        Returns a DataFrame of the mean forecast indexed by `y_timestamp` (default). With
+        `return_samples=True` it returns a numpy array of de-normalized sample paths with shape
+        [sample_count, pred_len, 6] (columns open, high, low, close, volume, amount) instead.
+        """
 
         if not isinstance(df, pd.DataFrame):
             raise ValueError("Input must be a pandas DataFrame.")
@@ -550,16 +574,18 @@ class KronosPredictor:
         x_stamp = x_stamp[np.newaxis, :]
         y_stamp = y_stamp[np.newaxis, :]
 
-        preds = self.generate(x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose)
+        preds = self.generate(x, x_stamp, y_stamp, pred_len, T, top_k, top_p, sample_count, verbose, return_samples=return_samples)
 
         preds = preds.squeeze(0)
         preds = preds * (x_std + 1e-5) + x_mean
+        if return_samples:
+            return preds  # [sample_count, pred_len, d_in]
 
         pred_df = pd.DataFrame(preds, columns=self.price_cols + [self.vol_col, self.amt_vol], index=y_timestamp)
         return pred_df
 
 
-    def predict_batch(self, df_list, x_timestamp_list, y_timestamp_list, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True):
+    def predict_batch(self, df_list, x_timestamp_list, y_timestamp_list, pred_len, T=1.0, top_k=0, top_p=0.9, sample_count=1, verbose=True, return_samples=False):
         """
         Perform parallel (batch) prediction on multiple time series. All series must have the same historical length and prediction length (pred_len).
 
@@ -573,6 +599,8 @@ class KronosPredictor:
             top_p (float): Top-p (nucleus sampling) threshold.
             sample_count (int): Number of parallel samples per series, automatically averaged internally.
             verbose (bool): Whether to display autoregressive progress.
+            return_samples (bool): If True, return the de-normalized sample paths as a list of numpy arrays
+                                   of shape [sample_count, pred_len, 6] instead of averaged DataFrames.
 
         Returns:
             List[pd.DataFrame]: List of prediction results in the same order as input, each DataFrame contains
@@ -649,8 +677,11 @@ class KronosPredictor:
         x_stamp_batch = np.stack(x_stamp_list, axis=0).astype(np.float32) # (B, seq_len, time_feat)
         y_stamp_batch = np.stack(y_stamp_list, axis=0).astype(np.float32) # (B, pred_len, time_feat)
 
-        preds = self.generate(x_batch, x_stamp_batch, y_stamp_batch, pred_len, T, top_k, top_p, sample_count, verbose)
-        # preds: (B, pred_len, feat)
+        preds = self.generate(x_batch, x_stamp_batch, y_stamp_batch, pred_len, T, top_k, top_p, sample_count, verbose, return_samples=return_samples)
+        # preds: (B, pred_len, feat) or (B, sample_count, pred_len, feat) with return_samples
+
+        if return_samples:
+            return [preds[i] * (stds[i] + 1e-5) + means[i] for i in range(num_series)]
 
         pred_dfs = []
         for i in range(num_series):

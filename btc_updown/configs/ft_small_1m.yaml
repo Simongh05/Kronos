@@ -1,0 +1,56 @@
+# E1b: joint fine-tune of Kronos-small (next-token CE) + DirectHead (BCE) on 1-minute BTC bars.
+# Predictor only; the pretrained tokenizer stays frozen. One RTX 4090, bf16, ~3 h.
+exp_name: ft_small_1m
+run_dir: /workspace/runs/{exp_name}
+expected_hours: 3
+seed: 100
+device: auto
+bf16: true
+
+data:
+  root: /workspace/klines
+  train_series: [spot_BTCUSDC, spot_BTCUSDT, um_BTCUSDT]
+  val_series: [spot_BTCUSDC]
+  lookback: 256          # matches the cube; round-trip test favours 256 (window = 271 tokens)
+  predict: 15
+  clip: 5.0
+  train_start: null
+  train_end: "2026-08-01"    # every training window closes before this
+  val_start: "2026-08-07"
+  val_end: "2026-09-07"
+  n_val_windows: 2048
+  num_workers: 6
+
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  tokenizer_revision: null
+  predictor: NeoQuasar/Kronos-small
+  predictor_revision: null
+  freeze_backbone: false
+  direct_head: true
+  head_hidden: 256
+  head_dropout: 0.1
+  head_init: null          # e.g. /workspace/runs/probe_small_1m/best/head.pt
+
+train:
+  steps: 30000
+  batch_size: 64
+  lr: 4.0e-5
+  head_lr: 1.0e-3
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 3.0
+  pct_start: 0.03
+  div_factor: 10
+  teacher_forcing: false   # upstream default: s2 head conditioned on a sampled s1
+  ce_weight: 1.0
+  bce_weight: 1.0
+  log_every: 50
+  val_every: 2500
+  ckpt_every: 2500
+  keep_last: 2
+  val_batch_size: 64
+
+# Optional: real-market task metric on validation (file never leaves the Mac; omit on the pod)
+val_labels: null
+val_label_points: 500

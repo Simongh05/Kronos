@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: run watchdog.sh every 15 minutes and terminate pods past their
+  deadline (data/cloud/deadlines.json) without asking.
+
+  Install:
+    cp btc_updown/cloud/com.kronos.runpod-watchdog.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.kronos.runpod-watchdog.plist
+  Remove:
+    launchctl bootout gui/$(id -u)/com.kronos.runpod-watchdog
+  Logs: data/cloud/watchdog.launchd.log and data/cloud/watchdog.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.kronos.runpod-watchdog</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/streetteam/Kronos/btc_updown/cloud/watchdog.sh</string>
+    <string>--apply</string>
+    <string>--yes</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/streetteam/Kronos/data/cloud/watchdog.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/streetteam/Kronos/data/cloud/watchdog.launchd.log</string>
+</dict>
+</plist>

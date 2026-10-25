@@ -1,0 +1,38 @@
+# Mac smoke test: tiny run on CPU/MPS against local klines (expects data/klines/spot_BTCUSDC).
+exp_name: smoke_local
+run_dir: data/runs/{exp_name}
+expected_hours: 0.1
+seed: 100
+device: auto
+bf16: false
+
+data:
+  root: data/klines
+  train_series: [spot_BTCUSDC]
+  val_series: [spot_BTCUSDC]
+  lookback: 128
+  predict: 15
+  clip: 5.0
+  train_end: "2026-08-01"
+  val_start: "2026-08-07"
+  val_end: "2026-09-07"
+  n_val_windows: 64
+  num_workers: 0
+
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: NeoQuasar/Kronos-small
+  freeze_backbone: false
+  direct_head: true
+  head_hidden: 64
+
+train:
+  steps: 20
+  batch_size: 4
+  lr: 4.0e-5
+  head_lr: 1.0e-3
+  log_every: 5
+  val_every: 10
+  ckpt_every: 10
+  keep_last: 2
+  val_batch_size: 8

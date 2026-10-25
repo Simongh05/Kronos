@@ -74,3 +74,9 @@ venv.bak/
 temp/
 tmp/
 .python-version
+
+# btc_updown: local data, memmaps, runs
+data/
+*.npy
+runs/
+cubes/
