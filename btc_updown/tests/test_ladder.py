@@ -52,3 +52,22 @@ def test_ladder_table(tmp_path, store_root):
     assert (t[t.event_ticker == "E0"]["basis_src"] == "default").all() and (t[t.event_ticker == "E2"]["basis_src"] == "prev_settle").all()
     assert t["p_null"].between(0, 1).all() and t["logit_direct"].notna().all()
     assert (t.loc[t.two_sided, "mkt_prob_up"].between(0, 1)).all()
+    assert t["p_samp"].isna().all()
+    # a fake sampling cube on the 5-minute grid: 8 sorted samples per (t, h) spread around the close
+    cd = tmp_path / "cube" / "tp_samples"; cd.mkdir(parents=True)
+    ts5 = ts[(ts % 300) == 0]
+    base = np.asarray(store.x)[np.searchsorted(np.asarray(store.ts), ts5 - 60), 3].astype(np.float32)
+    samp = base[:, None, None] * (1 + np.linspace(-0.01, 0.01, 8, dtype=np.float32)[None, None, :] * np.sqrt(np.arange(1, 61, dtype=np.float32))[None, :, None] / 8)
+    np.save(cd / "2020-01-01.t.npy", ts5); np.save(cd / "2020-01-01.npy", samp)
+    t2 = L.build(str(tmp_path), store_root, "synthetic", "2019-01-01", "2021-01-01", max_k=3, hidden=str(hd), head=str(hp),
+                 cube=str(tmp_path / "cube"))
+    on = t2["p_samp"].notna()
+    assert on.any() and (t2.loc[on, "t"] % 300 == 0).all() and (t2.loc[~on, "t"] % 300 != 0).all()
+    assert t2.loc[on, "p_samp"].between(0.5 / 9, 8.5 / 9).all() and (t2.loc[on, "n_paths"] == 8).all()
+    # a strike far below every sample -> top of the smoothed range; far above -> bottom; p_gauss moves the same way
+    r = t2[on].iloc[0]
+    row = samp[np.searchsorted(ts5, r["t"]), int(r["h"]) - 1]
+    assert ((row > r["strike_series"]).sum() + 0.5) / 9 == r["p_samp"]
+    lo = t2.loc[on].groupby("t").first()
+    assert (t2.loc[on].sort_values("strike").groupby("t")["p_samp"].apply(lambda x: (np.diff(x.to_numpy()) <= 1e-12).all())).all()
+    assert t2.loc[on, "p_gauss"].between(0, 1).all() and (t2.loc[on, "tp_sd"] > 0).all()

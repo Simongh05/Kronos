@@ -1,7 +1,9 @@
 """Decision table for Kalshi KXBTCD hourly strike ladders: one row per (ladder, decision minute, strike).
 
 Inputs (Mac only): the ladder archive (`data/kalshi_ladder/{markets,candles}`), the Binance BTCUSDC kline store, and
-optionally a backbone hidden-state dump (`cube.py` with dump_hidden) plus a DirectHead, which is applied at every strike.
+optionally a backbone hidden-state dump (`cube.py` with dump_hidden) plus a DirectHead, which is applied at every strike,
+and/or a sampling cube (`cube.py` with sampling at pred_len >= 60), whose sorted typical-price samples at h = 60 - m give
+P(final > strike) at every strike (rows at decision minutes the cube did not sample get NaN).
 
 Timing: decision minute m = 1..59 after the open, t = open + 60 m, h = 60 - m minutes to the close.  The book at t is
 the forward-filled candle ending at t (the last state inside minute m).  Model inputs use bars with open <= t - 60 s.
@@ -23,6 +25,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 import torch
+
+from scipy.stats import norm
 
 from ..data.nulls import ewma_sigma, null_prob
 from ..train.dataset import BAR_SECONDS, SeriesStore, direct_head_features, typical_price
@@ -130,8 +134,41 @@ def apply_head(table: pd.DataFrame, hidden_dir: str, head_path: str) -> np.ndarr
     return logits
 
 
+def apply_samples(table: pd.DataFrame, cube_dir: str) -> pd.DataFrame:
+    """Sampling-cube readout at every (t, h, strike_series) row: p_samp = smoothed fraction of the N sorted typical-price
+    samples at horizon h above the strike ((n_above + 0.5) / (N + 1), so 64 paths cannot saturate the logit), tp_mean /
+    tp_sd of those samples and p_gauss = the normal tail at the strike.  Rows whose t the cube did not sample stay NaN."""
+    n = len(table)
+    p_samp = np.full(n, np.nan); tp_mean = np.full(n, np.nan); tp_sd = np.full(n, np.nan); n_paths = np.zeros(n, dtype=np.int32)
+    t_all = table["t"].to_numpy(); h_all = table["h"].to_numpy().astype(int); K_all = table["strike_series"].to_numpy(dtype=float)
+    for f in sorted(glob.glob(os.path.join(cube_dir, "tp_samples", "*.t.npy"))):
+        day = os.path.basename(f)[:10]
+        t_arr = np.load(f)
+        if len(t_arr) == 0:
+            continue
+        samp = np.load(os.path.join(cube_dir, "tp_samples", f"{day}.npy"), mmap_mode="r")
+        sel = np.nonzero((t_all >= t_arr[0]) & (t_all <= t_arr[-1]))[0]
+        if len(sel) == 0:
+            continue
+        idx = np.searchsorted(t_arr, t_all[sel])
+        ok = (idx < len(t_arr)) & (t_arr[np.clip(idx, 0, len(t_arr) - 1)] == t_all[sel])
+        hh = h_all[sel] - 1
+        ok &= (hh >= 0) & (hh < samp.shape[1]) & np.isfinite(K_all[sel])
+        sel, idx, hh = sel[ok], idx[ok], hh[ok]
+        for (b, c), g in pd.DataFrame({"b": idx, "c": hh, "i": sel}).groupby(["b", "c"]):
+            row = np.asarray(samp[b, c], dtype=np.float64)                        # sorted ascending
+            gi = g["i"].to_numpy()
+            above = row.shape[0] - np.searchsorted(row, K_all[gi], side="right")
+            p_samp[gi] = (above + 0.5) / (row.shape[0] + 1.0)
+            tp_mean[gi] = row.mean(); tp_sd[gi] = row.std(); n_paths[gi] = row.shape[0]
+    table["p_samp"] = p_samp; table["tp_mean"] = tp_mean; table["tp_sd"] = tp_sd; table["n_paths"] = n_paths
+    with np.errstate(divide="ignore", invalid="ignore"):
+        table["p_gauss"] = norm.sf((K_all - tp_mean) / np.where(tp_sd > 0, tp_sd, np.nan))
+    return table
+
+
 def build(archive: str, klines: str, series: str, start: str, end: str, max_k: Optional[int], hidden: Optional[str],
-          head: Optional[str], halflife_min: float = 60.0) -> pd.DataFrame:
+          head: Optional[str], halflife_min: float = 60.0, cube: Optional[str] = None) -> pd.DataFrame:
     lad = load_ladders(archive, start, end)
     cand = _read_days(os.path.join(archive, "candles"), start, end, columns=["ticker", "event_ticker", "m", "bid", "ask", "px", "volume"])
     cand = cand.drop_duplicates(["ticker", "m"])
@@ -160,13 +197,19 @@ def build(archive: str, klines: str, series: str, start: str, end: str, max_k: O
     tbl["p_null"] = null_prob(tbl["close_t"].to_numpy(), tbl["strike_series"].to_numpy(), tbl["sigma_ewma"].to_numpy(),
                               tbl["h"].to_numpy().astype(float))
     tbl["logit_direct"] = apply_head(tbl, hidden, head) if hidden and head else np.nan
+    if cube:
+        tbl = apply_samples(tbl, cube)
+    else:
+        for c in ["p_samp", "tp_mean", "tp_sd", "n_paths", "p_gauss"]:
+            tbl[c] = np.nan
     tbl["venue"] = VENUE; tbl["family"] = FAMILY; tbl["market_id"] = tbl["ticker"]; tbl["minutes_left"] = tbl["h"]
     tbl["window_start"] = tbl["open_time"]; tbl["window_end"] = tbl["close_time"]
     tbl["label_day"] = pd.to_datetime(tbl["close_time"], unit="s").dt.date
     cols = ["venue", "family", "market_id", "event_ticker", "label_day", "window_start", "window_end", "t", "j", "h", "minutes_left",
             "strike", "strike_series", "basis", "basis_src", "k", "k_final", "outcome", "two_sided", "age", "bid", "ask", "px", "mkt_prob_up",
             "exec_price_up", "exec_price_down", "exec_size_up", "exec_size_down", "exec_time_up", "exec_time_down",
-            "close_t", "sigma1", "sigma_ewma", "p_null", "logit_direct", "expiration_value"]
+            "close_t", "sigma1", "sigma_ewma", "p_null", "logit_direct", "p_samp", "p_gauss", "tp_mean", "tp_sd", "n_paths",
+            "expiration_value"]
     return tbl[cols].sort_values(["event_ticker", "t", "strike"]).reset_index(drop=True)
 
 
@@ -177,13 +220,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--start", required=True); ap.add_argument("--end", required=True)
     ap.add_argument("--max-k", type=int, default=12, help="keep strikes within this many $100 steps of the ATM (None = all)")
     ap.add_argument("--hidden", default=None); ap.add_argument("--head", default=None)
+    ap.add_argument("--cube", default=None, help="sampling cube run_dir (tp_samples/) at pred_len >= 60")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
-    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head)
+    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head, cube=a.cube)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     t.to_parquet(a.out, index=False)
     print({"rows": int(len(t)), "ladders": int(t["event_ticker"].nunique()) if len(t) else 0, "days": int(t["label_day"].nunique()) if len(t) else 0,
-           "two_sided": float(t["two_sided"].mean()) if len(t) else 0, "with_head": int(t["logit_direct"].notna().sum()) if len(t) else 0})
+           "two_sided": float(t["two_sided"].mean()) if len(t) else 0, "with_head": int(t["logit_direct"].notna().sum()) if len(t) else 0,
+           "with_samples": int(t["p_samp"].notna().sum()) if len(t) else 0})
 
 
 if __name__ == "__main__":
