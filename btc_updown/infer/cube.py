@@ -84,7 +84,7 @@ def day_decision_times(store: SeriesStore, day_start: int, day_end: int, stride:
 
 def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dict:
     run_dir = cfg.run_dir
-    for sub in ("summary", "tp_samples", "direct", "paths", "days"):
+    for sub in ("summary", "tp_samples", "direct", "paths", "days", "hidden"):
         os.makedirs(os.path.join(run_dir, sub), exist_ok=True)
     write_json(os.path.join(run_dir, "config.json"), cfg.to_dict())
     device = pick_device(cfg.device)
@@ -102,8 +102,9 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
     stride = int(cc.stride_s)
     do_sampling = bool(cc.sampling)
     do_direct = bool(cc.direct) and bool(cfg.model.get("head"))
+    dump_hidden = bool(cc.get("dump_hidden", False))   # write the backbone's last-position hidden state per decision minute
     store_paths = bool(cc.get("store_paths", False))
-    if not (do_sampling or do_direct):
+    if not (do_sampling or do_direct or dump_hidden):
         raise ValueError("nothing to do: enable cube.sampling and/or cube.direct with model.head")
 
     store = SeriesStore.open(cfg.data.root, cfg.data.series)
@@ -130,7 +131,7 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
             continue
         tday = time.time()
         times = day_decision_times(store, int(d0), int(min(d0 + 86400, t_end)), stride, lookback)
-        summ_rows, direct_rows, path_frames = [], [], []
+        summ_rows, direct_rows, path_frames, hidden_chunks = [], [], [], []
         tp_all = np.zeros((len(times), pred_len, n_samples), dtype=np.float32) if do_sampling else None
         for b0 in range(0, len(times), bp):
             tb = times[b0:b0 + bp]
@@ -181,12 +182,16 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
                         **{c: preds[..., k].reshape(-1).astype(np.float32) for k, c in enumerate(["open", "high", "low", "close", "volume", "amount"])},
                     })
                     path_frames.append(df)
-            if do_direct:
+            if do_direct or dump_hidden:
                 with torch.no_grad():
                     s1, s2 = encode_tokens(tokenizer, x_t)
                     with autocast_ctx(device, bf16):
                         hidden = backbone_hidden(model, s1, s2, xs_t)
                     ctx = hidden[:, -1].float()
+                if dump_hidden:
+                    hidden_chunks.append(ctx.cpu().numpy().astype(np.float16))
+            if do_direct:
+                with torch.no_grad():
                     tp_hist = torch.from_numpy(np.stack(tps)).to(device)                    # [B, L]
                     j = torch.as_tensor(pairs[:, 0], device=device)
                     strike = tp_hist[:, lookback - 1 - j]                                  # [B, P]
@@ -206,10 +211,13 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
             np.save(os.path.join(run_dir, "tp_samples", f"{day}.t.npy"), times)
             if store_paths and path_frames:
                 pd.concat(path_frames).to_parquet(os.path.join(run_dir, "paths", f"{day}.parquet"), index=False)
+        if dump_hidden and hidden_chunks:
+            np.save(os.path.join(run_dir, "hidden", f"{day}.npy"), np.concatenate(hidden_chunks))
+            np.save(os.path.join(run_dir, "hidden", f"{day}.t.npy"), times)
         if do_direct and direct_rows:
             pd.concat(direct_rows).to_parquet(os.path.join(run_dir, "direct", f"{day}.parquet"), index=False)
         rec = {"day": day, "n_points": int(len(times)), "seconds": round(time.time() - tday, 1),
-               "sampling": do_sampling, "direct": do_direct}
+               "sampling": do_sampling, "direct": do_direct, "hidden": dump_hidden}
         write_json(done_marker, rec)
         manifest.append(rec)
         print(json.dumps(rec), flush=True)

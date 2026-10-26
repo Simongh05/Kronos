@@ -119,7 +119,7 @@ def test_cube_job_outputs_and_resume(tmp_path, tiny_models, store_root):
         "data": {"root": store_root, "series": "synthetic", "lookback": 32, "clip": 5.0},
         "model": {"tokenizer": tiny_models["tok_dir"], "predictor": tiny_models["model_dir"], "head": head_path},
         "cube": {"start": start, "end": end, "stride_s": 3600, "pred_len": 4, "n_samples": 5, "T": 1.0, "top_p": 1.0,
-                 "top_k": 0, "batch_points": 7, "sampling": True, "direct": True, "store_paths": True},
+                 "top_k": 0, "batch_points": 7, "sampling": True, "direct": True, "store_paths": True, "dump_hidden": True},
     })
     out = C.run(cfg, resume=True)
     assert len(out["days"]) == 1 and out["days"][0]["n_points"] == 24
@@ -131,6 +131,8 @@ def test_cube_job_outputs_and_resume(tmp_path, tiny_models, store_root):
     assert len(d) == 24 * 120 and np.isfinite(d["logit"]).all()
     p = pd.read_parquet(os.path.join(cfg.run_dir, "paths", f"{start}.parquet"))
     assert len(p) == 24 * 5 * 4
+    hid = np.load(os.path.join(cfg.run_dir, "hidden", f"{start}.npy"))
+    assert hid.shape == (24, 16) and hid.dtype == np.float16 and np.isfinite(hid.astype(np.float32)).all()
     # decision times are bar closes with no future bar used: context ends at t
     assert np.all(np.load(os.path.join(cfg.run_dir, "tp_samples", f"{start}.t.npy")) % 3600 == 0)
     # resume skips the finished day
