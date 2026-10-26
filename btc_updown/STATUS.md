@@ -71,7 +71,7 @@ python -m btc_updown.backtest.assemble --start 2026-08-07 --end 2026-09-07 --cub
 python -m btc_updown.calib.fit --table data/tables/val_e0.parquet --features z_model log_rel_sd --venue polymarket --out data/calib/e0.json
 python -m btc_updown.backtest.engine --table data/tables/val_e0.parquet --calib data/calib/e0.json --venue polymarket --out data/backtests/val_e0
 ```
-Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selection on val.
+Dev (09-07 → 10-14) was opened once on 2026-10-26 for Kalshi KXBTC15M with the frozen calib JSON; the Polymarket dev leg is still unopened but shares the dates, so treat any further dev run as exploratory.
 
 ## Observations from the Mac smoke runs
 
@@ -100,6 +100,7 @@ Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selectio
 | E0 (zero-shot small sampling cube, val, N=128, lookback 256) | 12 h (28 days) + resume pod for the last 3 days, ≈ $8 | beside the market: z_model coef 0.05, CI [−0.03, 0.14]; standalone gain vs null 0.0002–0.001 Brier. See REPORT.md |
 | E1b (joint CE + BCE fine-tune, small, 30k steps × 64) | 77 min, $0.76 | val CE 2.671 → 2.609; grid Brier 0.1609 (= probe). On real val rows beside the market: coef 0.082, CI [−0.03, 0.21]; standalone beats the null by 0.001 Brier. **Gate for E2 not met.** See REPORT.md |
 | Option 2: hidden-state dump (`cube_e1b_hidden_val`, 31 val days, 512-d per minute) + market-conditioned MLP head on the Mac | 43 s dump + pull pod, ≈ $1 | Trained on 08-08 → 08-20, early-stopped 08-21 → 08-24, **tested on 08-26 → 09-06**: Brier C (market+numeric+hidden) 0.1502 vs market-only A 0.1501; paired CI of C − A [−0.0009, +0.0010]; six seed/PCA variants, none better than A; backtest C negative in 5/6. **No information in the hidden state beside the market.** See REPORT.md |
+| Kalshi KXBTC15M, frozen pipeline (E1b head + val calibration + engine rule), dev exploratory | `cube_e1b_direct_kalshi` 41 days in 53 s, ≈ $0.5 | 7 quote days (10-11 → 10-17, 9,282 rows): market 0.1493, frozen blend 0.1497, null 0.1562; backtest −$241/quote-day at the ask, −$194 with a tick; exploratory refit head coef −0.50 [−0.73, −0.21] (collinear with the market, LODO gain 0.00004). **Kalshi is not better.** See REPORT.md |
 
 ## Open items
 
@@ -108,4 +109,4 @@ Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selectio
 - `backtest/report.py` renders fit + engine JSON to markdown.
 - Mac shell is zsh: never put an ssh command in a variable and expand it unquoted (`$SSH host …` fails with "no such file"); write the full command or use `eval`. This silently broke one waiter on 2026-10-26.
 - Pods based on the bare `runpod/pytorch` image have no `rsync`; pull with `tar czf - | tar xzf -` over ssh.
-- Kalshi leg: quotes exist 10-11 → 10-17 with labels from the recorder meta; not yet exercised through assemble (prices_kalshi has the same columns).
+- Kalshi leg exercised end to end (assemble → frozen engine → refit); tables `data/tables/dev_kalshi_e1b.parquet`, backtests `data/backtests/dev_kalshi_e1b_frozen*`, refits `data/calib/dev_kalshi_*_refit.json`.
