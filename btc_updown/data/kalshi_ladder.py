@@ -31,7 +31,8 @@ BASE = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES = "KXBTCD"
 BATCH = 100
 MAX_CANDLES = 10_000     # per batch request: tickers x periods
-HOURLY_MAX_H = 2.0          # open->close hours; the daily ladder is 25 h
+HOURLY_MAX_H = 2.0
+MAX_LADDER_HOURS = 30.0    # candles/fills only for ladders up to the daily one (25 h)          # open->close hours; the daily ladder is 25 h
 
 
 def ts(x: str) -> int:
@@ -115,18 +116,33 @@ def parse_candle(c: dict) -> dict:
             "px_mean": _f(pr.get("mean_dollars")), "volume": _f(c.get("volume_fp"), 0.0), "open_interest": _f(c.get("open_interest_fp"), 0.0)}
 
 
+def _batches(http: Http, tickers: List[str], batch: int, start_ts: int, end_ts: int):
+    """Batch candlestick requests; on the server's 'max candlesticks' refusal, split the batch and retry."""
+    i = 0
+    while i < len(tickers):
+        chunk = tickers[i:i + batch]
+        try:
+            yield http.get("/markets/candlesticks", market_tickers=",".join(chunk), start_ts=start_ts, end_ts=end_ts, period_interval=1)
+            i += len(chunk)
+        except RuntimeError as e:
+            if "max candlesticks" in str(e) and batch > 1:
+                batch = max(1, batch // 2)
+            else:
+                raise
+
+
 def fetch_candles(http: Http, markets: pd.DataFrame, day: str) -> pd.DataFrame:
     frames = []
     for ev, g in markets.groupby("event_ticker", sort=True):
         o, c = int(g["open_time"].iloc[0]), int(g["close_time"].iloc[0])
+        if (c - o) / 3600.0 > MAX_LADDER_HOURS:                  # a few oddly long events (not the hourly/daily ladders)
+            continue
         strike = dict(zip(g["ticker"], g["strike"]))
         tickers = list(g["ticker"])
-        periods = (c + 120 - (o - 120)) // 60 + 1
+        periods = (c + 120 - (o - 120)) // 60 + 20
         batch = max(1, min(BATCH, MAX_CANDLES // periods))      # the endpoint caps tickers x periods at 10,000
-        for i in range(0, len(tickers), batch):
-            r = http.get("/markets/candlesticks", market_tickers=",".join(tickers[i:i + batch]), start_ts=o - 120, end_ts=c + 120,
-                         period_interval=1)
-            for mk in r.get("markets", []):
+        for chunk in _batches(http, tickers, batch, o - 120, c + 120):
+            for mk in chunk.get("markets", []):
                 tk = mk.get("market_ticker") or mk.get("ticker")
                 cs = mk.get("candlesticks") or []
                 if not cs:

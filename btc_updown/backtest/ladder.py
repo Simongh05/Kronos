@@ -43,6 +43,7 @@ def _read_days(d: str, start: str, end: str, columns=None) -> pd.DataFrame:
 def load_ladders(archive: str, start: str, end: str) -> pd.DataFrame:
     """Hourly ladders (one row per market) with the previous ladder's settlement attached."""
     m = _read_days(os.path.join(archive, "markets"), start, end)
+    m = m.drop_duplicates("ticker")                 # a ladder closing exactly at midnight is listed on both day files
     m = m[(m["hours"] <= 2.0) & m["expiration_value"].notna() & m["result"].isin(["yes", "no"])].copy()
     ev = m.groupby("event_ticker").agg(open_time=("open_time", "first"), close_time=("close_time", "first"),
                                        exp=("expiration_value", "first")).sort_values("close_time")
@@ -131,6 +132,7 @@ def build(archive: str, klines: str, series: str, start: str, end: str, max_k: O
           head: Optional[str], halflife_min: float = 60.0) -> pd.DataFrame:
     lad = load_ladders(archive, start, end)
     cand = _read_days(os.path.join(archive, "candles"), start, end, columns=["ticker", "event_ticker", "m", "bid", "ask", "px", "volume"])
+    cand = cand.drop_duplicates(["ticker", "m"])
     b = book_rows(cand, lad, max_k)
     if b.empty:
         return b
