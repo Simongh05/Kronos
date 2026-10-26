@@ -1,0 +1,15 @@
+# DirectHead cube for the hourly markets from the jointly fine-tuned 60-bar model (ft_small_1h: backbone + head),
+# every minute of 2026-08-01 .. 10-24, only the j + h == 60 pairs.
+exp_name: cube_ft1h_direct_1h
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 0.5
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: spot_BTCUSDC, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: /workspace/runs/ft_small_1h/best/model
+  head: /workspace/runs/ft_small_1h/best/head.pt
+cube: {start: "2026-08-01", end: "2026-10-25", stride_s: 60, pred_len: 15, n_samples: 1, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 256, sampling: false, direct: true, direct_sum_only: true, store_paths: false}
