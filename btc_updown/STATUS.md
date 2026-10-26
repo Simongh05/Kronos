@@ -90,6 +90,15 @@ Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selectio
 | Pod recipe | REST `POST /v1/pods` with `gpuTypeIds ["NVIDIA A40"]`, `cloudType SECURE`, `dataCenterIds ["CA-MTL-1"]`, `networkVolumeId stv454bk3l`, `ports ["22/tcp"]`, `dockerStartCmd` = bootstrap from the public fork + `run_job.sh` |
 | Fork | https://github.com/Simongh05/Kronos branch `btc-updown` (public; code only) |
 
+## Cloud results so far (2026-10-25)
+
+| Exp | Pod | Outcome |
+|---|---|---|
+| Dry run | A40, 50 steps + 2,048-window val in 21 s | pipeline OK; self-termination works via the GraphQL fallback with RunPod's injected pod key (REST DELETE returns 403 for it); no second key needed |
+| E1b-probe (frozen small backbone + DirectHead, 6,000 steps × 128) | 10 min, $0.10 | val grid Brier 0.161 (plateau from step 1,000). On real val decision points: raw Brier 0.1503 vs null 0.1512; corr(logit_direct, logit_null) = 0.97; **beside the market: coef 0.008, CI [−0.11, 0.16] → no incremental information** (`data/calib/val_probe_direct_market.json`) |
+| E0 (zero-shot small sampling cube, val, N=128, lookback 256) | 12 h (28 days) + resume pod for the last 3 days, ≈ $8 | beside the market: z_model coef 0.05, CI [−0.03, 0.14]; standalone gain vs null 0.0002–0.001 Brier. See REPORT.md |
+| E1b (joint CE + BCE fine-tune, small, 30k steps × 64) | 77 min, $0.76 | val CE 2.671 → 2.609; grid Brier 0.1609 (= probe). On real val rows beside the market: coef 0.082, CI [−0.03, 0.21]; standalone beats the null by 0.001 Brier. **Gate for E2 not met.** See REPORT.md |
+
 ## Open items
 
 - RunPod account, prepaid credits, API keys, network volume (user) → dry run of `cloud/run_job.sh` self-termination.
