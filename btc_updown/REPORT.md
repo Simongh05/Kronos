@@ -114,8 +114,34 @@ Backtest on dev (7 % fee, clip $100, side-consistent ask): −$7/day at the quot
 positive, −1.2 ¢/share), −$4/day with a tick; bootstrap lower bounds −$23 and −$14. The head's standalone information is
 real but it is the null's (coefficient 0.40 beside the null, raw Brier equal to the null's); beside the market it is nothing.
 
-Not run for the hourly family: a joint fine-tune with 60-bar CE targets (E1b was tuned for 15), and the sampling cube at
-pred_len 60. At 15 minutes neither the joint fine-tune nor the sampler beat the probe, so they were not spent on here.
+### Joint fine-tune with 60-bar targets (`ft_small_1h`, 2026-10-26, user's go)
+
+The E1b recipe (joint next-token CE + DirectHead BCE from the pretrained small, 30,000 steps × 64, lr 4e-5) with
+`predict: 60` and the (j, h) grid up to j + h ≤ 60, so the CE targets cover the full hour: 91 min on an A40 (353 samples/s,
+≈ $0.9); val CE 2.594 → 2.576 (a 316-token window, not comparable to E1b's 2.609 at 271); val grid Brier 0.1615 (probe
+0.1612, i.e. the joint fine-tune does not improve the synthetic-strike task either). Cube `cube_ft1h_direct_1h` (85 days,
+102 s), the same tables, splits and rule as above; dev opened a third time with this frozen pipeline (exploratory).
+
+| rows | Brier market | Brier null | Brier head raw | corr(head, market) | corr(head, probe head) |
+|---|---|---|---|---|---|
+| 101,269 (85 days) | 0.1666 | 0.1690 | 0.1691 | 0.963 | 0.996 |
+
+| fit | coef(head) | 95 % CI (day blocks) | Brier market | Brier blend (LODO) |
+|---|---|---|---|---|
+| val, market + head + null | 0.128 | [−0.21, 0.52] | 0.16588 | 0.16665 |
+| val, head + null, no market | 0.47 | [0.07, 0.89] (null 0.54 [0.11, 1.04]) | — | — |
+| dev refit (exploratory) | 0.122 | [−0.10, 0.36] | 0.16740 | 0.16785 |
+
+Frozen val calibration on dev: blend 0.16739 vs market 0.16740, null 0.16998; the difference is within ±0.0002 in every
+minutes-left bucket (the 45–59 bucket: blend 0.22959, market 0.22968). The backtest splits on the execution assumption:
++$33/day at the quoted print (1,142 trades, 34 of 48 days positive, +5.8 ¢/share, bootstrap lb95 +$22, of which +$1,037
+of the +$1,584 total comes from entries 45–59 minutes before the close) but −$11/day with a one-tick haircut (798 trades,
+lb95 −$25). The probe head on the same rows: −$7 and −$4. With calibrated probabilities equal to the market's at every
+horizon, a print-only profit that a one-tick haircut erases is the gap between early, thin prints and the mid, not model
+information; neither run passes the $150/day hurdle (t = −15 and −19). The jointly fine-tuned head is the probe head
+(correlation 0.996) and the probe head is the null pricer.
+
+Not run for the hourly family: the sampling cube at pred_len 60 (the sampler did not beat the direct head at 15 minutes).
 
 ## Training facts
 
@@ -126,8 +152,8 @@ pred_len 60. At 15 minutes neither the joint fine-tune nor the sampler beat the 
 
 ## Spend
 
-About $11 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance ≈ $87 of $100 after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod and the hourly probe pod.
+About $12 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance $88.68 of $100 (RunPod `clientBalance` on 2026-10-26 after the hourly joint fine-tune) after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod, the hourly probe pod and the hourly fine-tune pod.
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets.
