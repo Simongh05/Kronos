@@ -30,6 +30,7 @@ import requests
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 SERIES = "KXBTCD"
 BATCH = 100
+MAX_CANDLES = 10_000     # per batch request: tickers x periods
 HOURLY_MAX_H = 2.0          # open->close hours; the daily ladder is 25 h
 
 
@@ -120,8 +121,10 @@ def fetch_candles(http: Http, markets: pd.DataFrame, day: str) -> pd.DataFrame:
         o, c = int(g["open_time"].iloc[0]), int(g["close_time"].iloc[0])
         strike = dict(zip(g["ticker"], g["strike"]))
         tickers = list(g["ticker"])
-        for i in range(0, len(tickers), BATCH):
-            r = http.get("/markets/candlesticks", market_tickers=",".join(tickers[i:i + BATCH]), start_ts=o - 120, end_ts=c + 120,
+        periods = (c + 120 - (o - 120)) // 60 + 1
+        batch = max(1, min(BATCH, MAX_CANDLES // periods))      # the endpoint caps tickers x periods at 10,000
+        for i in range(0, len(tickers), batch):
+            r = http.get("/markets/candlesticks", market_tickers=",".join(tickers[i:i + batch]), start_ts=o - 120, end_ts=c + 120,
                          period_interval=1)
             for mk in r.get("markets", []):
                 tk = mk.get("market_ticker") or mk.get("ticker")
