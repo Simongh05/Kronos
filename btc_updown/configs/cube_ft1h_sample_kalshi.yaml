@@ -1,0 +1,18 @@
+# Kalshi KXBTCD ladders: sampling cube at pred_len 60 on the 60-bar joint fine-tune (ft_small_1h), 64 paths per decision
+# point, decision points every 5 minutes (t = hh:05, :10, .., :55 and the hour boundary), 2026-08-20 .. 10-24 (the API's
+# retention window). P(final > strike) at every ladder strike is read off the sorted typical-price samples on the Mac.
+# Cost: E0 was 1,519 s/day for 1,440 points x 128 paths x 15 bars; this is 288 x 64 x 60 bars with no KV cache, so
+# ~0.43x per day ~ 11 min/day, ~12 h for 66 days on an A40.
+exp_name: cube_ft1h_sample_kalshi
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 12
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: spot_BTCUSDC, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: /workspace/runs/ft_small_1h/best/model
+  head: null
+cube: {start: "2026-08-20", end: "2026-10-25", stride_s: 300, pred_len: 60, n_samples: 64, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 32, sampling: true, direct: false, store_paths: false}

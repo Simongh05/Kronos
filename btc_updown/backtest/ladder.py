@@ -76,8 +76,10 @@ def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int]
             gg = gg[gg["m"] <= 59].sort_values("m")
             if gg.empty:
                 continue
-            b = gg.set_index("m")[["bid", "ask", "px", "volume"]].reindex(MINUTES).ffill()
-            b = b[b["bid"].notna()]
+            b = gg.set_index("m")[["bid", "ask", "px", "volume"]].reindex(MINUTES)
+            b["age"] = (b.index.to_numpy() - pd.Series(np.where(b["bid"].notna(), b.index.to_numpy(), np.nan), index=b.index).ffill()).astype(float)
+            b = b.ffill()
+            b = b[b["bid"].notna()]                    # age = minutes since the last real candle (0 = fresh)
             b["ticker"] = tk; b["event_ticker"] = ev; b["k"] = k
             b["t"] = o + 60 * b.index.to_numpy()
             out.append(b.reset_index())
@@ -162,7 +164,7 @@ def build(archive: str, klines: str, series: str, start: str, end: str, max_k: O
     tbl["window_start"] = tbl["open_time"]; tbl["window_end"] = tbl["close_time"]
     tbl["label_day"] = pd.to_datetime(tbl["close_time"], unit="s").dt.date
     cols = ["venue", "family", "market_id", "event_ticker", "label_day", "window_start", "window_end", "t", "j", "h", "minutes_left",
-            "strike", "strike_series", "basis", "basis_src", "k", "k_final", "outcome", "two_sided", "bid", "ask", "px", "mkt_prob_up",
+            "strike", "strike_series", "basis", "basis_src", "k", "k_final", "outcome", "two_sided", "age", "bid", "ask", "px", "mkt_prob_up",
             "exec_price_up", "exec_price_down", "exec_size_up", "exec_size_down", "exec_time_up", "exec_time_down",
             "close_t", "sigma1", "sigma_ewma", "p_null", "logit_direct", "expiration_value"]
     return tbl[cols].sort_values(["event_ticker", "t", "strike"]).reset_index(drop=True)
