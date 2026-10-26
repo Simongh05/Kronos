@@ -18,6 +18,8 @@ Plan: `~/.claude/plans/keen-questing-quill.md` (approved 2026-10-25). Branch `bt
 | Decision table (labels × prices × cube × null) | `btc_updown/backtest/assemble.py` | done, tested |
 | Calibration / blend with day-block bootstrap | `btc_updown/calib/fit.py` | done, tested |
 | Market-conditioned head (market + numeric + Kronos hidden state, MLP; train/test by day; paired bootstrap; backtest) | `btc_updown/calib/market_head.py` | done, run on val (see REPORT.md) |
+| Public Polymarket long-window data (hourly / 4h / daily): windows + taker orders + minute mids, executable-price rule | `btc_updown/data/pm_long.py` → `data/pm_long/` | done, tested; hourly built (full windows, prices 08-01 → 10-26) |
+| DirectHead grid up to `model.head_max_h` (60 for hourly); cube `direct_sum_only` | `train/dataset.py`, `loop.py`, `validate.py`, `infer/cube.py` | done, tested (23 tests) |
 | Backtest engine (one entry per window, fees, two execution assumptions, day stats) | `btc_updown/backtest/engine.py` | done, tested |
 | RunPod scripts | `btc_updown/cloud/` | written (other session); untested against a live account |
 | Configs | `btc_updown/configs/*.yaml` | `ft_small_1m`, `probe_small_1m`, `cube_e0_small_val`, `smoke_local`, `cube_smoke_local` |
@@ -101,6 +103,7 @@ Dev (09-07 → 10-14) was opened once on 2026-10-26 for Kalshi KXBTC15M with the
 | E1b (joint CE + BCE fine-tune, small, 30k steps × 64) | 77 min, $0.76 | val CE 2.671 → 2.609; grid Brier 0.1609 (= probe). On real val rows beside the market: coef 0.082, CI [−0.03, 0.21]; standalone beats the null by 0.001 Brier. **Gate for E2 not met.** See REPORT.md |
 | Option 2: hidden-state dump (`cube_e1b_hidden_val`, 31 val days, 512-d per minute) + market-conditioned MLP head on the Mac | 43 s dump + pull pod, ≈ $1 | Trained on 08-08 → 08-20, early-stopped 08-21 → 08-24, **tested on 08-26 → 09-06**: Brier C (market+numeric+hidden) 0.1502 vs market-only A 0.1501; paired CI of C − A [−0.0009, +0.0010]; six seed/PCA variants, none better than A; backtest C negative in 5/6. **No information in the hidden state beside the market.** See REPORT.md |
 | Kalshi KXBTC15M, frozen pipeline (E1b head + val calibration + engine rule), dev exploratory | `cube_e1b_direct_kalshi` 41 days in 53 s, ≈ $0.5 | 7 quote days (10-11 → 10-17, 9,282 rows): market 0.1493, frozen blend 0.1497, null 0.1562; backtest −$241/quote-day at the ask, −$194 with a tick; exploratory refit head coef −0.50 [−0.73, −0.21] (collinear with the market, LODO gain 0.00004). **Kalshi is not better.** See REPORT.md |
+| Hourly Polymarket (btc-1h): public data build (`data/pm_long.py`, 12,338 markets, 1.5 M orders for 08-01 → 10-26), probe head with h ≤ 60 on the frozen E1b backbone, cube 85 days | 13 min + 99 s, ≈ $0.5 | val coef 0.079 [−0.23, 0.46]; frozen on dev: blend 0.16740 = market 0.16740, null 0.16998; backtest −$7/day; head raw Brier = null's (0.1691 vs 0.1690), corr with market 0.968. **Negative.** See REPORT.md |
 
 ## Open items
 

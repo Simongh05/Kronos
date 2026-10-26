@@ -85,6 +85,38 @@ Losses concentrate in the 0.4–0.8 price range (−$1,844 of the −$1,690 tota
 
 Exploratory refit on the 7 Kalshi days (not frozen; 7 day-blocks only): market slope 1.32 [1.02, 1.58], head coefficient **−0.50 [−0.73, −0.21]**, null +0.27 [0.08, 0.52]; leave-one-day-out blend Brier 0.14927 vs market 0.14931. A market-only refit with the null gives slope 1.18 and null −0.14, the same pattern. The negative head sign is the collinearity signature of a feature that is a noisier copy of the market (corr 0.95 on val): the fit sharpens the market term past 1 and subtracts the copy. Even taken at face value it buys 0.00004 Brier out of sample and nothing after fees.
 
+## Hourly Polymarket markets (btc-1h) with a 60-minute head (2026-10-26)
+
+Scope: `SCOPE-LONGER-WINDOWS.md`. Data: `btc_updown/data/pm_long.py` built every hourly market from public endpoints
+(12,338 markets since 2025-05-28, labels exact from the local Binance BTCUSDT 1 h candle, 12,303/12,303 agree) and, for
+the clean window 2026-08-01 → 10-26 (after E1b's kline cutoff), every taker order (1.52 M) and the minute mid series:
+2,074 markets, 122,366 decision minutes (t = 1 … 59 min into the hour), executable price on 68 % / 66 % of the minutes per
+side, some market price on 84 %. Model: the E1b backbone frozen, a DirectHead retrained on the (j, h) grid with j + h ≤ 60
+(`probe_small_1h`, 13 min on an A40, grid Brier 0.1612 from step 1,000), cube `cube_e1b_direct_1h` (85 days, 99 s).
+Fit on val days 08-07 → 09-06 (31 days, 36,276 rows with a market price), frozen, then applied to dev days 09-07 → 10-24
+(48 days, 57,647 rows). Exploratory label: this is the second and last time the dev dates were opened.
+
+| rows | Brier market | Brier null | Brier head raw | corr(head, market) |
+|---|---|---|---|---|
+| 101,269 (85 days) | 0.1666 | 0.1690 | 0.1691 | 0.968 |
+
+The hourly market is much closer to the null than the 15-minute one (gap 0.0024 vs 0.008), so there was room: at 45–59
+minutes to the close the market scores 0.2292 and the null 0.2309.
+
+| fit | coef(head) | 95 % CI (day blocks) | Brier market | Brier blend (LODO) |
+|---|---|---|---|---|
+| val, market + head + null | 0.079 | [−0.23, 0.46] | 0.16588 | 0.16665 |
+| val, head + null, no market | 0.40 | [0.02, 0.87] (null 0.60 [0.12, 1.12]) | — | — |
+| dev refit (exploratory) | 0.095 | [−0.19, 0.38] | 0.16740 | 0.16788 |
+
+Frozen val calibration on dev: blend 0.16740 vs market 0.16740 (equal at every minutes-left bucket), null 0.16998.
+Backtest on dev (7 % fee, clip $100, side-consistent ask): −$7/day at the quoted print (1,135 trades, 28 of 48 days
+positive, −1.2 ¢/share), −$4/day with a tick; bootstrap lower bounds −$23 and −$14. The head's standalone information is
+real but it is the null's (coefficient 0.40 beside the null, raw Brier equal to the null's); beside the market it is nothing.
+
+Not run for the hourly family: a joint fine-tune with 60-bar CE targets (E1b was tuned for 15), and the sampling cube at
+pred_len 60. At 15 minutes neither the joint fine-tune nor the sampler beat the probe, so they were not spent on here.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -94,8 +126,8 @@ Exploratory refit on the 7 Kalshi days (not frozen; 7 day-blocks only): market s
 
 ## Spend
 
-About $11 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance ≈ $88 of $100 after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod and the Kalshi cube pod.
+About $11 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance ≈ $87 of $100 after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod and the hourly probe pod.
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market.
