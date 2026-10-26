@@ -27,7 +27,9 @@ import pandas as pd
 from ..data.nulls import ewma_sigma, null_prob
 from ..train.dataset import BAR_SECONDS, SeriesStore, typical_price
 
-REGIMES_OK = {"btc-5m-twap-60", "btc-15m-twap-60", "brti60"}
+REGIMES_OK = {"btc-5m-twap-60", "btc-15m-twap-60", "brti60", "binance-1h-candle"}
+# families whose strike is the OPEN of the bar at window start (Binance candle markets), not the previous bar's typical price
+OPEN_STRIKE_FAMILIES = {"btc-1h"}
 
 
 def _epoch(s: str) -> int:
@@ -43,11 +45,18 @@ def decision_rows(windows: pd.DataFrame, store: SeriesStore, min_minutes_left: i
         if i0 < 0:
             continue
         dur = int((r.window_end - r.window_start) // BAR_SECONDS)
+        if r.family in OPEN_STRIKE_FAMILIES:
+            i_open = store.index_of_bar_closing_at(int(r.window_start) + BAR_SECONDS)
+            if i_open < 0:
+                continue
+            strike_series = float(store.x[i_open, 0])
+        else:
+            strike_series = float(tp_all[i0])
         for k in range(1, dur - min_minutes_left + 1):
             t = int(r.window_start + BAR_SECONDS * k)
             rows.append((r.venue, r.family, r.market_id, int(r.window_start), int(r.window_end), r.label_day, t, k, dur - k,
                          int(r.outcome), float(r.strike) if pd.notna(r.strike) else np.nan,
-                         float(r.final) if pd.notna(r.final) else np.nan, float(tp_all[i0])))
+                         float(r.final) if pd.notna(r.final) else np.nan, strike_series))
     cols = ["venue", "family", "market_id", "window_start", "window_end", "label_day", "t", "j", "h", "outcome", "strike",
             "final", "strike_series"]
     return pd.DataFrame(rows, columns=cols)

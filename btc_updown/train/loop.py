@@ -135,8 +135,9 @@ def run(cfg: Config, resume: bool = False, max_steps: Optional[int] = None) -> D
     predict = int(cfg.data.predict)
     if lookback + predict > 512:
         raise ValueError("lookback + predict must be <= 512 (Kronos max context)")
-    if cfg.model.direct_head and predict < 15:
-        raise ValueError("data.predict must be >= 15 when model.direct_head is enabled (the (j,h) grid needs 15 future bars)")
+    head_max_h = int(cfg.model.get("head_max_h", 15))
+    if cfg.model.direct_head and predict < head_max_h:
+        raise ValueError(f"data.predict must be >= model.head_max_h ({head_max_h}) when model.direct_head is enabled")
 
     train_stores, val_stores, train_ds, val_ds = build_datasets(cfg)
     print(describe_stores(train_stores))
@@ -151,7 +152,7 @@ def run(cfg: Config, resume: bool = False, max_steps: Optional[int] = None) -> D
         if cfg.model.get("head_init"):
             head = load_head(cfg.model.head_init, device)
         else:
-            head = DirectHead(model.d_model, hidden=int(cfg.model.head_hidden), max_h=15,
+            head = DirectHead(model.d_model, hidden=int(cfg.model.head_hidden), max_h=head_max_h,
                               dropout=float(cfg.model.head_dropout)).to(device)
     freeze = bool(cfg.model.freeze_backbone)
     if freeze:
@@ -225,7 +226,7 @@ def run(cfg: Config, resume: bool = False, max_steps: Optional[int] = None) -> D
                                              int(cfg.val_label_points), int(cfg.seed))
         print(f"real-market validation points: {len(mkt_points)}")
 
-    pairs = strike_horizon_pairs(15)
+    pairs = strike_horizon_pairs(head.max_h if head is not None else 15)
     h_idx = torch.as_tensor(pairs[:, 1], device=device)
     ce_w = float(cfg.train.ce_weight) if not freeze else 0.0
     bce_w = float(cfg.train.bce_weight) if head is not None else 0.0
@@ -276,7 +277,7 @@ def run(cfg: Config, resume: bool = False, max_steps: Optional[int] = None) -> D
         if head is not None:
             tp = batch["tp"].to(device)
             labels, strike = direct_head_targets(tp, lookback, pairs)
-            feats = direct_head_features(batch["close_t"].to(device), batch["sigma1"].to(device), strike, pairs)
+            feats = direct_head_features(batch["close_t"].to(device), batch["sigma1"].to(device), strike, pairs, head.max_h)
             ctx = hidden[:, lookback - 1].float()
             logits = head(ctx, h_idx, feats)
             bce = DirectHead.loss(logits, labels)

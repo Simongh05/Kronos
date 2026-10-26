@@ -28,7 +28,7 @@ def evaluate_windows(model, tokenizer, head: Optional[DirectHead], loader: DataL
     model.eval()
     if head is not None:
         head.eval()
-    pairs = strike_horizon_pairs(15)
+    pairs = strike_horizon_pairs(head.max_h if head is not None else 15)
     h_idx = torch.as_tensor(pairs[:, 1], device=device)
     sum_jh = pairs[:, 0] + pairs[:, 1]
     sel5 = torch.as_tensor(sum_jh == 5, device=device)
@@ -54,7 +54,7 @@ def evaluate_windows(model, tokenizer, head: Optional[DirectHead], loader: DataL
         if head is not None:
             tp = batch["tp"].to(device)
             labels, strike = direct_head_targets(tp, lookback, pairs)
-            feats = direct_head_features(batch["close_t"].to(device), batch["sigma1"].to(device), strike, pairs)
+            feats = direct_head_features(batch["close_t"].to(device), batch["sigma1"].to(device), strike, pairs, head.max_h)
             ctx = hidden[:, lookback - 1].float()
             logits = head(ctx, h_idx, feats)
             p = torch.sigmoid(logits)
@@ -156,7 +156,7 @@ def evaluate_markets(model, tokenizer, head: DirectHead, store: SeriesStore, poi
             rel / (sigma1 * torch.sqrt(h.float())),
             rel * 100.0,
             torch.log(sigma1),
-            h.float() / 15.0,
+            h.float() / float(head.max_h),
             torch.zeros_like(rel),
         ], dim=-1)[:, None, :]
         feats = torch.nan_to_num(feats, nan=0.0, posinf=50.0, neginf=-50.0).clamp_(-50.0, 50.0)

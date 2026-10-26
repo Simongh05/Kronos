@@ -43,6 +43,26 @@ def _prices(w: pd.DataFrame, rng, informative=True):
     return pd.DataFrame(rows)
 
 
+def test_assemble_hourly_family_uses_candle_open_as_strike(tmp_path, store_root):
+    store = SeriesStore.open(store_root, "synthetic")
+    ts = np.asarray(store.ts); x = np.asarray(store.x)
+    rows = []
+    for k in range(300, 1500, 60):
+        ws = int(ts[k]); we = ws + 3600                      # window starts at a bar OPEN (the candle's first bar)
+        i0, i1 = k, k + 59
+        rows.append({"venue": "polymarket", "family": "btc-1h", "market_id": f"h{ws}", "condition_id": "c", "token_up": "u",
+                     "token_down": "d", "window_start": ws, "window_end": we, "strike": float(x[i0, 0]), "final": float(x[i1, 3]),
+                     "outcome": int(x[i1, 3] >= x[i0, 0]), "regime": "binance-1h-candle", "tape_regime": None, "source": "test",
+                     "label_day": pd.Timestamp(ws, unit="s").date()})
+    w = pd.DataFrame(rows); wp = tmp_path / "wh.parquet"; w.to_parquet(wp, index=False)
+    t0 = str(pd.Timestamp(int(w.window_start.min()), unit="s").floor("D").date())
+    t1 = str((pd.Timestamp(int(w.window_end.max()), unit="s").floor("D") + pd.Timedelta(days=1)).date())
+    table = A.build(str(wp), None, None, store_root, "synthetic", t0, t1)
+    assert len(table) == 59 * len(w) and set(table["h"]) == set(range(1, 60))
+    assert np.allclose(table["strike_series"], table["strike"])   # the candle open, not the previous bar's typical price
+    assert table["p_null"].between(0, 1).all()
+
+
 def test_assemble_fit_and_engine(tmp_path, store_root):
     store = SeriesStore.open(store_root, "synthetic")
     rng = np.random.RandomState(0)

@@ -39,6 +39,7 @@ DEFAULTS: Dict[str, Any] = {
         "direct_head": True,
         "head_hidden": 256,
         "head_dropout": 0.1,
+        "head_max_h": 15,           # (j,h) grid: j + h <= head_max_h; 60 for hourly markets
         "head_init": None,          # path to a head.pt to start from
     },
     "train": {

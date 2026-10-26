@@ -217,8 +217,9 @@ def direct_head_targets(tp: torch.Tensor, lookback: int, pairs: np.ndarray) -> T
     return labels, strike
 
 
-def direct_head_features(close_t: torch.Tensor, sigma1: torch.Tensor, strike: torch.Tensor, pairs: np.ndarray) -> torch.Tensor:
-    """Numeric features per (j, h): [(K-c)/(c*sigma1*sqrt(h)), (K-c)/c in bps/100, log sigma1, h/15, j/15]."""
+def direct_head_features(close_t: torch.Tensor, sigma1: torch.Tensor, strike: torch.Tensor, pairs: np.ndarray,
+                         max_h: int = 15) -> torch.Tensor:
+    """Numeric features per (j, h): [(K-c)/(c*sigma1*sqrt(h)), (K-c)/c in bps/100, log sigma1, h/max_h, j/max_h]."""
     j = torch.as_tensor(pairs[:, 0], device=close_t.device, dtype=torch.float32)
     h = torch.as_tensor(pairs[:, 1], device=close_t.device, dtype=torch.float32)
     c = close_t[:, None]
@@ -227,8 +228,8 @@ def direct_head_features(close_t: torch.Tensor, sigma1: torch.Tensor, strike: to
     f0 = rel / (s * torch.sqrt(h)[None, :])                  # in units of expected h-minute vol
     f1 = rel * 100.0                                         # in percent
     f2 = torch.log(s).expand_as(rel)
-    f3 = (h / 15.0)[None, :].expand_as(rel)
-    f4 = (j / 15.0)[None, :].expand_as(rel)
+    f3 = (h / float(max_h))[None, :].expand_as(rel)
+    f4 = (j / float(max_h))[None, :].expand_as(rel)
     feats = torch.stack([f0, f1, f2, f3, f4], dim=-1)
     return torch.nan_to_num(feats, nan=0.0, posinf=50.0, neginf=-50.0).clamp_(-50.0, 50.0)
 

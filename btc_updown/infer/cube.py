@@ -112,7 +112,10 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
     model = load_model(cfg.model.predictor, cfg.model.get("predictor_revision")).to(device).eval()
     model_ac = _AutocastModel(model, device, bf16)
     head = load_head(cfg.model.head, device).eval() if do_direct else None
-    pairs = strike_horizon_pairs(15)
+    grid_max_h = int(head.max_h) if head is not None else 15
+    pairs = strike_horizon_pairs(grid_max_h)
+    if bool(cc.get("direct_sum_only", False)):          # only j + h == max_h: the real market geometry (hourly: 59 pairs)
+        pairs = pairs[pairs[:, 0] + pairs[:, 1] == grid_max_h]
     h_idx = torch.as_tensor(pairs[:, 1], device=device)
 
     t_start = int(np.datetime64(cc.start, "s").astype(np.int64))
@@ -197,7 +200,7 @@ def run(cfg: Config, resume: bool = True, max_days: Optional[int] = None) -> Dic
                     strike = tp_hist[:, lookback - 1 - j]                                  # [B, P]
                     close_t = torch.as_tensor(closes, device=device, dtype=torch.float32)
                     sigma1 = torch.as_tensor(sigmas, device=device, dtype=torch.float32)
-                    feats = direct_head_features(close_t, sigma1, strike, pairs)
+                    feats = direct_head_features(close_t, sigma1, strike, pairs, grid_max_h)
                     logits = head(ctx, h_idx, feats).float().cpu().numpy()                # [B, P]
                 P = pairs.shape[0]
                 direct_rows.append(pd.DataFrame({
