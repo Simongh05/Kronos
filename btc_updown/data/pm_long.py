@@ -244,7 +244,10 @@ def build_windows(http: Http, family: str, start: str, end: str, klines_root: st
             "source": "gamma", "label_day": dt.datetime.fromtimestamp(ws, dt.timezone.utc).date(),
             "volume_usd": float(m.get("volumeNum") or m.get("volume") or 0.0),
         })
-    w = pd.DataFrame(rows).sort_values("window_start").drop_duplicates("market_id").reset_index(drop=True)
+    w = pd.DataFrame(rows).drop_duplicates("market_id")
+    # relisted hours (a slug with and without the year, a "-666" twin, the DST hour that does not exist): keep the
+    # market with the most volume per window
+    w = w.sort_values(["window_start", "volume_usd"], ascending=[True, False]).drop_duplicates("window_start").reset_index(drop=True)
     w["outcome"] = w["outcome"].astype("int8")
     return w
 
@@ -424,7 +427,8 @@ def main(argv=None):
         w = build_windows(http, a.family, a.start, a.end, a.klines)
         if os.path.exists(wp):  # merge with what exists (other date ranges)
             old = pd.read_parquet(wp)
-            w = pd.concat([old[~old["market_id"].isin(w["market_id"])], w], ignore_index=True).sort_values("window_start").reset_index(drop=True)
+            w = pd.concat([old[~old["market_id"].isin(w["market_id"])], w], ignore_index=True)
+            w = w.sort_values(["window_start", "volume_usd"], ascending=[True, False]).drop_duplicates("window_start").reset_index(drop=True)
         w.to_parquet(wp, index=False)
         print(json.dumps({"markets": len(w), "first": str(w["label_day"].min()), "last": str(w["label_day"].max()),
                           "calls": http.calls, "label_agree": int(((w["outcome"] == w["outcome_klines"]) & (w["outcome"] >= 0)).sum()),
