@@ -1,4 +1,4 @@
-# btc_updown — status (2026-10-25)
+# btc_updown — status (2026-10-26)
 
 Plan: `~/.claude/plans/keen-questing-quill.md` (approved 2026-10-25). Branch `btc-updown`. Nothing committed yet.
 
@@ -17,6 +17,7 @@ Plan: `~/.claude/plans/keen-questing-quill.md` (approved 2026-10-25). Branch `bt
 | Proxy validation (bar proxy vs exact 60-s mean vs recorded final) | `btc_updown/data/proxy_check.py` → `data/controls/proxy_check.json` | done (research venv) |
 | Decision table (labels × prices × cube × null) | `btc_updown/backtest/assemble.py` | done, tested |
 | Calibration / blend with day-block bootstrap | `btc_updown/calib/fit.py` | done, tested |
+| Market-conditioned head (market + numeric + Kronos hidden state, MLP; train/test by day; paired bootstrap; backtest) | `btc_updown/calib/market_head.py` | done, run on val (see REPORT.md) |
 | Backtest engine (one entry per window, fees, two execution assumptions, day stats) | `btc_updown/backtest/engine.py` | done, tested |
 | RunPod scripts | `btc_updown/cloud/` | written (other session); untested against a live account |
 | Configs | `btc_updown/configs/*.yaml` | `ft_small_1m`, `probe_small_1m`, `cube_e0_small_val`, `smoke_local`, `cube_smoke_local` |
@@ -98,10 +99,13 @@ Dev (09-07 → 10-14) is opened once, with the frozen calib JSON, after selectio
 | E1b-probe (frozen small backbone + DirectHead, 6,000 steps × 128) | 10 min, $0.10 | val grid Brier 0.161 (plateau from step 1,000). On real val decision points: raw Brier 0.1503 vs null 0.1512; corr(logit_direct, logit_null) = 0.97; **beside the market: coef 0.008, CI [−0.11, 0.16] → no incremental information** (`data/calib/val_probe_direct_market.json`) |
 | E0 (zero-shot small sampling cube, val, N=128, lookback 256) | 12 h (28 days) + resume pod for the last 3 days, ≈ $8 | beside the market: z_model coef 0.05, CI [−0.03, 0.14]; standalone gain vs null 0.0002–0.001 Brier. See REPORT.md |
 | E1b (joint CE + BCE fine-tune, small, 30k steps × 64) | 77 min, $0.76 | val CE 2.671 → 2.609; grid Brier 0.1609 (= probe). On real val rows beside the market: coef 0.082, CI [−0.03, 0.21]; standalone beats the null by 0.001 Brier. **Gate for E2 not met.** See REPORT.md |
+| Option 2: hidden-state dump (`cube_e1b_hidden_val`, 31 val days, 512-d per minute) + market-conditioned MLP head on the Mac | 43 s dump + pull pod, ≈ $1 | Trained on 08-08 → 08-20, early-stopped 08-21 → 08-24, **tested on 08-26 → 09-06**: Brier C (market+numeric+hidden) 0.1502 vs market-only A 0.1501; paired CI of C − A [−0.0009, +0.0010]; six seed/PCA variants, none better than A; backtest C negative in 5/6. **No information in the hidden state beside the market.** See REPORT.md |
 
 ## Open items
 
 - RunPod account, prepaid credits, API keys, network volume (user) → dry run of `cloud/run_job.sh` self-termination.
 - Training configs use `lookback: 256` (matches the cube; decided from the round-trip test).
-- `backtest/report.py` (markdown rendering of fit + engine JSON) not written yet; the JSON outputs hold every number.
+- `backtest/report.py` renders fit + engine JSON to markdown.
+- Mac shell is zsh: never put an ssh command in a variable and expand it unquoted (`$SSH host …` fails with "no such file"); write the full command or use `eval`. This silently broke one waiter on 2026-10-26.
+- Pods based on the bare `runpod/pytorch` image have no `rsync`; pull with `tar czf - | tar xzf -` over ssh.
 - Kalshi leg: quotes exist 10-11 → 10-17 with labels from the recorder meta; not yet exercised through assemble (prices_kalshi has the same columns).

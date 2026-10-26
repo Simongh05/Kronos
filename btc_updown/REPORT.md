@@ -38,6 +38,32 @@ Kronos does carry a little information beyond a volatility model (gains of 0.000
 
 Two sub-buckets show a statistically detectable coefficient (early in 15-minute windows, and the 5m family), but the Brier gain is ≤ 0.0001 in both, six buckets were tested, and nothing of that size survives a 1.75¢ taker fee.
 
+## Market-conditioned head (option 2): a head that sees both the Kronos state and the market price
+
+The three tests above fit a linear blend of a scalar Kronos readout and the market logit. A sharper question is whether a small non-linear head that sees the fine-tuned model's full hidden state *and* the market price can beat the market on days it was not trained on. Setup (`btc_updown/calib/market_head.py`): the E1b backbone's last-position hidden state (512-d, float16) was dumped for every validation minute (`cube_e1b_hidden_val`, 31 days, 43 s on an A40 after the earlier cube runs); rows are the validation decision minutes with an executable Polymarket price. Train days 08-08 → 08-20 (21,148 rows), early stopping on 08-21 → 08-24 (7,227), **test days 08-26 → 09-06 (20,756 rows, 9 days, never seen in training)**. Models, all fit on the train days only:
+
+| model | inputs | Brier on test days |
+|---|---|---|
+| raw market price | — | 0.14989 |
+| A | market logit (logistic) | 0.15010 |
+| B | market + 5 numeric feats (strike distance, EWMA vol, h, j, null logit) | 0.15018 |
+| C0 | B's inputs through the MLP (control for the MLP itself) | 0.15017 |
+| **C** | **market + numeric + Kronos hidden state (PCA 64), MLP with a market skip weight** | **0.15021** |
+| D | same inputs as C, linear | 0.15154 |
+
+Paired day-level bootstrap of Brier(C) − Brier(A): [−0.00086, +0.00097]; Brier(C) − Brier(B): [−0.00098, +0.00093]. The head's learned market skip weight is 1.02, i.e. it kept trusting the market. Robustness over seeds and PCA widths (same train/test days):
+
+| run | C − A Brier, 95% CI | backtest C on test days, $/day (lb95) |
+|---|---|---|
+| seed 0, PCA 64 | [−0.0009, +0.0010] | −101 (−240) |
+| seed 1, PCA 64 | [−0.0007, +0.0011] | −11 (−133) |
+| seed 2, PCA 64 | [−0.0002, +0.0008] | −134 (−286) |
+| seed 0, PCA 16 | [+0.0000, +0.0020] | +27 (−176) |
+| seed 0, PCA 256 | [+0.0003, +0.0024] | −245 (−442) |
+| seed 0, no PCA (512) | [−0.0012, +0.0012] | −118 (−190) |
+
+In no setting does the hidden state improve on the market-only model; where the CI excludes zero it is because the hidden state made the head *worse* (overfitting the 11 training days). The backtest of C on the test days (one entry per window, side-consistent ask, 7% fee) loses money in five of six runs; the one positive run has a bootstrap lower bound of −$176/day. The null pricer on the same rows scores 0.15624. Artifacts: `data/calib/market_head*/summary.json`, `trades_test_C.parquet`, `head_C.pt` (Mac only).
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -47,8 +73,8 @@ Two sub-buckets show a statistically detectable coefficient (early in 15-minute 
 
 ## Spend
 
-About $10 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance $91 of $100 after E0 + probe + E1b + the E0 resume pod.
+About $11 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance ≈ $89 of $100 after E0 + probe + E1b + the E0 resume pod + the hidden-state dump and a pull pod.
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. Dev was not opened and no α was spent.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was not opened and no α was spent.
