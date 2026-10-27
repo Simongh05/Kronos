@@ -190,20 +190,57 @@ fee + half-spread (42 %) are the ones where the disagreement is noise, as the 0.
 on val, dev and the distribution score, about 0.3 % of the market's Brier (0.8 % of its log score), concentrated at
 5–30 minutes to the close. It is too small to earn the taker fee and spread; a maker execution (posting at the bid,
 no fee on this series' maker side if any, fill risk unmeasured) is the only route by which it could be money, and that
-needs the fills archive and a queue model, not a candle backtest. Not run: the sampling cube at pred_len 60 (≈ $6.5),
-which would test whether a full distribution adds to the head.
+needs the fills archive and a queue model, not a candle backtest.
+
+### Sampling cube at 60 bars (`cube_ft1h_sample_kalshi`, 2026-10-27, user's go)
+
+The distribution test proper: the 60-bar joint fine-tune (`ft_small_1h`) sampled free-running, 64 paths per decision
+point, decision points every 5 minutes of the retention window (66 days, 288 points/day), lookback 256, T = 1,
+top_p = 1; 588 s per day on an A40, 10.8 h, ≈ $6.4. Readout at every ladder strike (`backtest/ladder.py --cube`):
+p_samp = smoothed fraction of the sorted typical-price samples at h = 60 − m above the strike, p_gauss = normal tail
+from the sample mean and sd. Same val/dev split, same fits, on the 5-minute rows only (80,678 two-sided val rows,
+82,218 dev rows).
+
+| val, beside market | coef(head) | coef(sampler) | LODO Brier |
+|---|---|---|---|
+| A: head + null | 0.416 [0.045, 0.807] | — | 0.09256 |
+| B: head + null + sampler | 0.397 [0.004, 0.790] | 0.007 [−0.027, 0.038] | 0.09264 |
+| C: sampler + null (no head) | — | 0.013 [−0.018, 0.043] | 0.09277 |
+| D: head + null + normal tail | 0.401 [0.002, 0.785] | 0.003 [−0.016, 0.022] | 0.09265 |
+| sampled centre as drift, z = (mean − close)/(σ√h) | 0.404 [−0.002, 0.791] | 0.007 [−0.053, 0.064] | 0.09272 |
+
+Market Brier on these rows 0.09271. The sampler's coefficient is zero in every form, with or without the head; the
+no-market fit gives the same (−0.004 [−0.038, 0.025]). Frozen on dev the head-only blend A beats the market by
+0.00011 per day [−0.00031, 0.00044] on the 5-minute rows (the full-minute result was 0.00024 [0.00002, 0.00047];
+one twelfth of the rows) and adding the sampler makes it worse by 0.00006 [−0.00013, 0.00001]; distribution log
+score A 1.7124, B 1.7131, market 1.7250 (A − B −0.0008 [−0.0017, −0.0000]). The `ft_small_1h` head gives the same
+picture. Dev refit of B: sampler −0.012 [−0.042, 0.023].
+
+Why the sampler has nothing: its raw Brier is 0.257 (the constant 0.25), against market 0.0927 and head 0.0932,
+because the free-running distribution is right at one bar and wrong after twenty. Sample sd against realized, in
+bps of the close: h = 1 3.2 vs 3.4; h = 5 10.1 vs 12.5; h = 15 28 vs 22; h = 30 26 vs 31; h = 60 19 vs 43. The width
+*shrinks* beyond h ≈ 20 as the sampled bars flatten, and the centre drifts down 4–15 bps (half a strike step), so
+at the ladder's horizons most strikes sit outside the sampled range and p_samp is near 0 or 1. The zero-shot E0 cube
+at 15 bars was already under-dispersed (6.9 vs 22 bps at h = 15); the 60-bar fine-tune did not fix the free-running
+path. The sampled centre is uncorrelated with the head's logit (0.003) and with the market's excess over the null
+(0.003), so it is not even a noisy version of the same signal.
+
+**Reading.** The full sampled distribution adds nothing to the direct head on the ladders: the autoregressive sampler
+is unusable beyond ~20 bars (collapsing width, drifting centre), and what it says at shorter horizons the head already
+says better. The ladder result stands as the head's alone: 0.3 % Brier, 0.8 % log score, no money after fee and spread.
 
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
 - E1b: 30,000 steps × 64, joint CE + BCE, 77 min on an A40 (416 samples/s); val CE 2.671 → 2.609; val grid Brier 0.1609 (no better than the probe). Checkpoint: volume `/workspace/runs/ft_small_1m/best`, Mac copy `data/cloud/runs/ft_small_1m/best`.
 - E0: zero-shot small, N = 128 paths, lookback 256, T = 1.0, top_p = 1.0; 25 min per day on an A40; raw path-count Brier 0.169 (worse than the null's 0.150 until calibrated); path dispersion 2.5 bps at h = 1 to 10.6 bps at h = 14.
+- Sampling cube at 60 bars: `ft_small_1h` backbone, 64 paths, 288 points/day, 588 s per day on an A40 (no KV cache; 0.39× E0's per-day time for 0.2 × 0.5 × 4.3 the work), 10.8 h for 66 days; output 413 MB (`data/cloud/cubes/cube_ft1h_sample_kalshi`).
 - Controls: tokenizer round-trip, settlement-proxy flip rate and the null-pricer benchmark are in STATUS.md.
 
 ## Spend
 
-About $12.5 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance $88.68 of $100 (RunPod `clientBalance` on 2026-10-26 after the hourly joint fine-tune) after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod, the hourly probe pod and the hourly fine-tune pod.
+About $19 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance $81.90 of $100 (RunPod `clientBalance` on 2026-10-27 after the 60-bar sampling cube) after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod, the hourly probe pod, the hourly fine-tune pod, the Kalshi hidden-dump pod and the 60-bar sampling cube (10.8 h, ≈ $6.4).
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars).
