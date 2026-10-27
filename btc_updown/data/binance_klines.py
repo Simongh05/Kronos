@@ -105,6 +105,8 @@ SERIES: dict[str, Series] = {
     "spot_BTCUSDC": Series("spot_BTCUSDC", "spot", "BTCUSDC"),
     "spot_BTCUSDT": Series("spot_BTCUSDT", "spot", "BTCUSDT"),
     "um_BTCUSDT": Series("um_BTCUSDT", "futures/um", "BTCUSDT"),
+    "spot_ETHUSDT": Series("spot_ETHUSDT", "spot", "ETHUSDT"),
+    "spot_SOLUSDT": Series("spot_SOLUSDT", "spot", "SOLUSDT"),
 }
 
 

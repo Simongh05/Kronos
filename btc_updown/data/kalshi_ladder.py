@@ -241,12 +241,17 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", choices=["markets", "candles", "fills", "report"])
     ap.add_argument("--start"); ap.add_argument("--end")
-    ap.add_argument("--out", default="data/kalshi_ladder")
+    ap.add_argument("--series", default="KXBTCD", help="hourly ladder series (KXBTCD, KXETHD, KXSOLD, ...)")
+    ap.add_argument("--out", default=None, help="default data/kalshi_ladder for KXBTCD, data/kalshi_ladder_<series> otherwise")
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--min-interval", type=float, default=0.2)
     ap.add_argument("--fill-strikes", type=int, default=5, help="ATM +/- this many strikes get their fills")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)
+    global SERIES
+    SERIES = a.series
+    if a.out is None:
+        a.out = "data/kalshi_ladder" if a.series == "KXBTCD" else f"data/kalshi_ladder_{a.series}"
     if a.cmd == "report":
         print(report(a.out)); return
     if not (a.start and a.end):

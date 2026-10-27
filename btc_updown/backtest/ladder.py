@@ -56,11 +56,18 @@ def load_ladders(archive: str, start: str, end: str) -> pd.DataFrame:
     consecutive = (ev["close_time"] - ev["prev_close"]) == 3600
     ev.loc[~consecutive, ["prev_close", "prev_exp"]] = np.nan
     m = m.merge(ev[["prev_close", "prev_exp"]], left_on="event_ticker", right_index=True, how="left")
-    m["strike_eff"] = m["strike"] + 0.01           # "> 80299.99" == ">= 80300"
+    step = strike_step(m)
+    m["strike_eff"] = np.ceil(m["strike"] / step - 1e-9) * step   # "> 80299.99" == ">= 80300" (ETH: 3044.99 -> 3045, SOL: 99.9999 -> 100)
     return m
 
 
-def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int]) -> pd.DataFrame:
+def strike_step(ladders: pd.DataFrame) -> float:
+    """Strike spacing of the series (100 for KXBTCD, 5 for KXETHD, 0.25 for KXSOLD), the median gap within a ladder."""
+    gaps = ladders.sort_values(["event_ticker", "strike"]).groupby("event_ticker")["strike"].diff().dropna()
+    return float(gaps.median()) if len(gaps) else 100.0
+
+
+def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int], step: float = 100.0) -> pd.DataFrame:
     """Forward-fill each (event, strike) book over minutes 1..59; keep strikes within max_k of the ATM strike."""
     out = []
     lad = ladders.set_index("ticker")
@@ -74,7 +81,7 @@ def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int]
         for tk, gg in g.groupby("ticker", sort=False):
             if tk not in lad.index:
                 continue
-            k = (lad.loc[tk, "strike"] - ref) / 100.0 if np.isfinite(ref) else np.nan
+            k = (lad.loc[tk, "strike"] - ref) / step if np.isfinite(ref) else np.nan
             if max_k is not None and (not np.isfinite(k) or abs(k) > max_k):
                 continue
             gg = gg[gg["m"] <= 59].sort_values("m")
@@ -168,11 +175,12 @@ def apply_samples(table: pd.DataFrame, cube_dir: str) -> pd.DataFrame:
 
 
 def build(archive: str, klines: str, series: str, start: str, end: str, max_k: Optional[int], hidden: Optional[str],
-          head: Optional[str], halflife_min: float = 60.0, cube: Optional[str] = None) -> pd.DataFrame:
+          head: Optional[str], halflife_min: float = 60.0, cube: Optional[str] = None, default_basis: float = DEFAULT_BASIS) -> pd.DataFrame:
     lad = load_ladders(archive, start, end)
+    step = strike_step(lad)
     cand = _read_days(os.path.join(archive, "candles"), start, end, columns=["ticker", "event_ticker", "m", "bid", "ask", "px", "volume"])
     cand = cand.drop_duplicates(["ticker", "m"])
-    b = book_rows(cand, lad, max_k)
+    b = book_rows(cand, lad, max_k, step)
     if b.empty:
         return b
     store = SeriesStore.open(klines, series)
@@ -191,9 +199,9 @@ def build(archive: str, klines: str, series: str, start: str, end: str, max_k: O
     tpp = tp_at(store, tbl["prev_close"].to_numpy(dtype=float))
     tbl["basis"] = tbl["prev_exp"] - tbl["prev_close"].map(lambda x: tpp.get(int(x), np.nan) if np.isfinite(x) else np.nan)
     tbl["basis_src"] = np.where(tbl["basis"].notna(), "prev_settle", "default")
-    tbl["basis"] = tbl["basis"].fillna(DEFAULT_BASIS)
+    tbl["basis"] = tbl["basis"].fillna(default_basis)
     tbl["strike_series"] = tbl["strike_eff"] - tbl["basis"]
-    tbl["k_final"] = ((tbl["strike"] - tbl["expiration_value"]) / 100.0).round().astype(int)
+    tbl["k_final"] = ((tbl["strike"] - tbl["expiration_value"]) / step).round().astype(int)
     tbl["p_null"] = null_prob(tbl["close_t"].to_numpy(), tbl["strike_series"].to_numpy(), tbl["sigma_ewma"].to_numpy(),
                               tbl["h"].to_numpy().astype(float))
     tbl["logit_direct"] = apply_head(tbl, hidden, head) if hidden and head else np.nan
@@ -221,9 +229,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--max-k", type=int, default=12, help="keep strikes within this many $100 steps of the ATM (None = all)")
     ap.add_argument("--hidden", default=None); ap.add_argument("--head", default=None)
     ap.add_argument("--cube", default=None, help="sampling cube run_dir (tp_samples/) at pred_len >= 60")
+    ap.add_argument("--default-basis", type=float, default=DEFAULT_BASIS, help="basis when the previous ladder's settlement is unknown (BTC: -14; alts: 0)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
-    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head, cube=a.cube)
+    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head, cube=a.cube, default_basis=a.default_basis)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     t.to_parquet(a.out, index=False)
     print({"rows": int(len(t)), "ladders": int(t["event_ticker"].nunique()) if len(t) else 0, "days": int(t["label_day"].nunique()) if len(t) else 0,

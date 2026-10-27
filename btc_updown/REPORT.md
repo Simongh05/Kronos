@@ -319,6 +319,67 @@ ladder's own prices are in the model, it carries no vol information beyond the t
 in the price. The plan's one remaining GPU step (Kronos-base on the ladders) would be chasing a 0.3 % edge that these
 tests say is already fully extracted by the small model; not run.
 
+### Static arbitrage and cross-asset lag on the ladders (Mac only, 2026-10-27, user's go)
+
+Two non-Kronos ideas from the "what else" list, both on public Kalshi data (`data/kalshi_ladder.py --series`,
+`backtest/ladder_arb.py`, `backtest/ladder_lag.py`, `backtest/stale.py`). Dev is open for the ladders → exploratory.
+
+**1. Monotonicity arbitrage on the KXBTCD ladders** (`data/backtests/ladder_arb`). A ladder's yes prices must fall
+with the strike; a yes bid at a higher strike above a yes ask at a lower strike is a locked profit (buy the low
+strike, sell the high one). Scanned every candle minute of the 1,544 hourly events (94,327 ladder-minutes with
+quotes) in three tiers: closing quotes of the minute, the minute's low ask against its high bid (the crossing must
+hold for the whole minute), and a forward-filled book. Closing quotes: 27 events, 44 ladder-minutes, 67 strike
+pairs cross gross; **18 ladder-minutes net of the two taker fees** (36 pairs, median 4.1 ¢ net, upper quartile
+25 ¢), 25 of the 36 on 2026-08-21 (the first archived day), 24 of 36 in the last 9 minutes before settlement, and all
+but one at bid levels below 10 ¢ or above 70 ¢ (the wings). Whole-minute tier: **one** ladder-minute, 0.8 ¢ net. The
+4 crossed rows that fall inside the fills archive did print both legs at or through the crossed prices, so the
+quotes were real, but they are a handful of 1–30 ¢ events in 66 days that last less than a minute. Not a strategy.
+
+**2. Cross-asset lag: ETH and SOL ladders** (`data/backtests/ladder_lag_{ethd,sold}`, `stale_{ethd,sold}`). Kalshi
+also lists hourly above/below ladders on ETH (KXETHD, $5 strikes) and SOL (KXSOLD, $0.25 strikes). Archived both
+for the same 66 days (ETH 1,483 events, SOL 1,476), built the same ladder tables with the EWMA null, and asked
+whether BTC's last 1/5/15-minute moves (z-scored by the EWMA σ) or the asset's own moves predict the next minute's
+change in the ladder's mid, and whether a frozen null blend beats the mid. Next-minute regressions on val (|k| ≤ 2,
+fresh two-sided quotes): ETH R² 0.0008 (BTC z1 coef 0.15 ¢ [0.03, 0.28] of a 5.9 ¢ sd; dev 0.06 [−0.04, 0.16]), SOL
+R² 0.007 (own z1 0.63 ¢ [0.50, 0.77], BTC z1 0.11 [0.01, 0.22]; dev 0.47 and 0.06). The same-minute R² is 0.56
+on both, i.e. the ladders track their spot within the minute and leave ≈ nothing for the next one. Blends on val →
+frozen on dev (35 days):
+
+| Ladder | Dev Brier: market mid | EWMA null | Frozen null blend − market | + BTC/own returns − null blend | Taker backtest at the close quote |
+|---|---|---|---|---|---|
+| ETH (KXETHD) | 0.09413 | 0.09687 | −0.00019 [−0.00034, −0.00003] | [−0.00006, +0.00003] | 0 trades (no edge > fee); next-open −$84/day (145 trades) |
+| SOL (KXSOLD) | 0.12208 | **0.11394** | **−0.00986 [−0.01392, −0.00617]** | +0.0006 to +0.0016 (worse) | +$371/day (lb95 +13), next-open **+$289/day (lb95 −46, 24/35 days)**, +$173 with a tick |
+
+ETH is as efficient as BTC: the null adds nothing beside the mid in any strike bucket, and the lag coefficients
+are too small to trade. SOL is different: the free EWMA null alone beats the market mid on dev, the mispricing
+sits in the wings (|k| > 3.5 steps: null 0.069 vs market 0.108) and 20–59 minutes before the close, and the frozen
+null blend's taker backtest ($100 clips at the ask/bid, one entry per market at the first minute with
+blend − price > fee + 1 ¢) is positive at the closing quote, at the next minute's opening quote (the stale-quote
+check: 95 % of entries have a next-open quote, and the quotes barely move between a close and the next open) and
+with a tick of slippage. The P&L is skewed: the top 3 days are 84 % of it, longshots at ≤ 10 ¢ give +$14.9 k at a
+17 % hit rate and 10–30 ¢ give −$9.5 k; a spread ≤ 2 ¢ filter chosen on val gives +$229/+$264 on dev
+(lb95 −15/+88). Adding BTC or SOL returns to the blend makes it worse on dev (collinear with the null's σ).
+
+**Why it does not pay: there is nobody to trade with.** SOL's hourly ladders trade a median 6,265 contracts per
+event against 1.42 M for BTC and 43 k for ETH; the median strike trades nothing, and the entry minute's candle
+volume at the entry strike is 0 for most entries. Capping each trade's shares at that candle's volume turns
++$289/day into **−$42/day**; capping at 100 shares gives +$70 (lb95 −29). The decisive check is the public print
+archive (`fills/`, 551 k SOL prints, 301 k on the dev days, median 8.7 k/day, ATM ± 5 strikes): for each of the
+3,361 dev next-open trades, count the taker prints in the market in the minute and the five minutes after the next
+open that were at or better than our price on our side (a taker bought yes at ≤ our ask, or sold yes at ≥ our bid).
+89 % of the markets printed at some point in their life, but within 5 minutes of the entry only 33 % of trades see
+a print at or better than our price, 1.9 % could have been filled in full, and the fillable quantity is 39,520 of
+the 784,479 simulated shares (5 %). P&L on the fillable quantity: **−$139/day** (1-minute window −$49; windows
+from the decision minute instead of the next open −$19 / −$128). The trades that do print are the ones that lose
+(ATM and the 10–70 ¢ prices, −$2.5 k / −$3.5 k capped), and the longshot wins that made the simulated profit
+(≤ 10 ¢, +$14.9 k simulated) never print at our price (+$59 capped). The SOL ladder's quoted wings are mispriced
+and untradeable: the quotes are stale resting orders at strikes nobody is taking, and what does trade is priced
+like BTC's ladder.
+
+**Reading.** No static arbitrage on the BTC ladders beyond a few 1–30 ¢ crossings that vanish within a minute;
+ETH's ladder is as efficient as BTC's; SOL's ladder is mispriced on paper by a free vol model and the mispricing
+cannot be collected because the market is ~200× thinner than BTC's and the mispriced quotes do not trade.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -333,4 +394,4 @@ About $19 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars). Maker execution of that edge, simulated against 26 M public taker prints, loses under the optimistic fill bound (−$38/day on dev) and more under the pessimistic one (−$122/day); the resting-order flow on the ladders is informed (joining at the mid loses 3 ¢/share), so there is no route left from the ladder edge to money. Three free follow-ups (a market-conditioned head on the ladder rows, a realized-vol forecast test, taker-flow features beside the price) found nothing more in the hidden state or the public flow.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars). Maker execution of that edge, simulated against 26 M public taker prints, loses under the optimistic fill bound (−$38/day on dev) and more under the pessimistic one (−$122/day); the resting-order flow on the ladders is informed (joining at the mid loses 3 ¢/share), so there is no route left from the ladder edge to money. Three free follow-ups (a market-conditioned head on the ladder rows, a realized-vol forecast test, taker-flow features beside the price) found nothing more in the hidden state or the public flow. Two non-Kronos checks on the public ladder data (static monotonicity arbitrage on the BTC ladders; cross-asset lag and a null-blend on the ETH and SOL ladders) found no tradeable crossings, an efficient ETH ladder, and a SOL ladder whose mispriced wings are quotes that nobody takes (−$139/day on the quantity that actually printed at our prices).
