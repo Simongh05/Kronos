@@ -275,6 +275,50 @@ in the wrong direction.
 queue model, book recorder or fee ruling can rescue it; the resting-order flow on KXBTCD is informed enough that a 0.3 %
 distribution edge is far below the cost of being hit. This closes the last untested route on the ladders.
 
+### Three free tests on the ladders (Mac only, 2026-10-27, user's go)
+
+Before any further GPU spend, the three cheapest questions that could still have changed the ladder answer, all on the
+existing hidden-state dumps, tables and the fills archive. All train on the val days and test frozen on the dev days
+(dev is open for the ladders → exploratory). Scripts `calib/ladder_head.py`, `calib/vol_test.py`, `calib/flow_test.py`.
+
+**1. Market-conditioned head on the ladders** (`data/calib/ladder_head`). Option 2 from the 5m markets, rebuilt for the
+ladder rows: market logit + numeric (k, strike distance, log σ, h, null logit, the frozen head's logit, quote age) +
+the ladder's own shape (the mids at k ± 1..5 relative to the row's) + the 512-d hidden state (PCA 64), as a logistic
+(D) and as an MLP (C), against the same without the hidden state (B logistic, C0 MLP). 424,589 fit/early-stop rows on
+32 val days, 433,424 test rows on 34 dev days. Dev Brier: market 0.08854, frozen blend 0.08835, A (market refit)
+0.08841, B 0.08871, D 0.09149, C0 0.09069, **C 0.09552**. Paired day-block differences: C − B +0.0068 [0.0048, 0.0089];
+D − B +0.0028 [0.0017, 0.0039]; C − C0 +0.0048 [0.0025, 0.0071]; B − A +0.0003 [−0.0002, 0.0008]. Worse with the
+hidden state in every h and |k| bucket, linear or not; the MLP early-stops after 7 epochs at a worse loss than the
+no-hidden MLP. Given the ladder's own prices, the hidden state only adds month-to-month drift: it does not transfer
+from the val month to the dev month at all.
+
+**2. Realized-vol forecast** (`data/calib/vol_test`). If Kronos knows anything the ladder does not, it should be the vol
+regime. Target: log realized variance of the 60 bars after t, every minute of the 66 days (40,320 fit / 5,760
+early-stop / 48,900 test minutes). Ridge, alpha picked on the early-stop days. Test MSE of log RV: EWMA-60 alone
+0.505; EWMA (4 halflives) + HAR-RV (1 h, 6 h, 1 d, 1 w) 0.436; + hour-of-day and weekday one-hots 0.375 (N2);
+**+ hidden 0.370** (N3 − N2 −0.0045 [−0.017, +0.008]); hidden + time of day without the vol features 0.615; hidden
+alone 0.679 (R² 0.39 vs 0.54 for EWMA-60 alone; corr 0.73 vs 0.74 with the target, 0.82 with N2). QLIKE looked better
+for N3 (0.2345 vs 0.2546, −0.020 [−0.033, −0.008]) but that is a level effect: N3 forecasts higher variance on the
+dev regime (test bias +0.087 vs +0.042 in log RV) and QLIKE punishes under-forecasts; with each model's own early-stop
+bias removed the difference is −0.009 [−0.020, +0.0007]. Gradient boosting on either set is far worse than ridge
+(overfits 32 days). The hidden state is a vol encoder about as good as one EWMA, with nothing beyond EWMA + HAR +
+time of day.
+
+**3. Taker flow beside the price** (`data/calib/flow_test`). From the 26.3 M public prints: signed taker count
+(yes-buys − no-buys) over total, per ladder over the last 1, 5, 15 minutes and its whole life, at the row's own strike
+over 5 minutes, and log volume, all with prints up to t (the same information as the candle's quote at t). Val fit of
+the frozen blend's features + flow, day-block bootstrap: every flow coefficient includes zero (imb1 −0.03 [−0.09,
+0.02], imb5 −0.03 [−0.19, 0.20], imb15 −0.08 [−0.84, 1.02], own-strike 0.04 [−0.04, 0.12], volume −0.02 [−0.06,
+0.08]); leave-one-day-out Brier 0.09313 vs 0.09294 without the flow (worse). Frozen on dev: blend + flow − blend
+−0.00001 [−0.00012, +0.00010]; market + flow − market −0.00010 [−0.00031, +0.00011]. Dev refit: the only coefficient
+away from zero is log volume (−0.14 [−0.22, −0.06], a calibration-by-activity effect, exploratory). The ladder's quote
+absorbs its own taker flow within the minute; the flow is informed (the maker study) and already priced.
+
+**Reading.** None of the three moves the ladder result: the hidden state does not generalize month to month once the
+ladder's own prices are in the model, it carries no vol information beyond the textbook set, and the public flow is
+in the price. The plan's one remaining GPU step (Kronos-base on the ladders) would be chasing a 0.3 % edge that these
+tests say is already fully extracted by the small model; not run.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -289,4 +333,4 @@ About $19 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars). Maker execution of that edge, simulated against 26 M public taker prints, loses under the optimistic fill bound (−$38/day on dev) and more under the pessimistic one (−$122/day); the resting-order flow on the ladders is informed (joining at the mid loses 3 ¢/share), so there is no route left from the ladder edge to money.
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars). Maker execution of that edge, simulated against 26 M public taker prints, loses under the optimistic fill bound (−$38/day on dev) and more under the pessimistic one (−$122/day); the resting-order flow on the ladders is informed (joining at the mid loses 3 ¢/share), so there is no route left from the ladder edge to money. Three free follow-ups (a market-conditioned head on the ladder rows, a realized-vol forecast test, taker-flow features beside the price) found nothing more in the hidden state or the public flow.
