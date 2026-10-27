@@ -39,7 +39,12 @@ def load_fills(archive: str, start: str, end: str) -> pd.DataFrame:
     fs = [f for f in sorted(glob.glob(os.path.join(archive, "fills", "*.parquet"))) if start <= os.path.basename(f)[:10] < end]
     if not fs:
         return pd.DataFrame(columns=["ticker", "ts", "yes_price", "count", "taker_side"])
-    d = pd.concat([pd.read_parquet(f, columns=["ticker", "ts", "yes_price", "count", "taker_side", "block"]) for f in fs])
+    cols = ["ticker", "ts", "yes_price", "count", "taker_side", "block"]
+    parts = [pd.read_parquet(f) for f in fs]
+    parts = [p[cols] for p in parts if len(p)]  # a day with no prints is written as an empty, column-less file
+    if not parts:
+        return pd.DataFrame(columns=["ticker", "ts", "yes_price", "count", "taker_side"])
+    d = pd.concat(parts)
     d = d[~d["block"]].drop(columns="block")
     return d.sort_values(["ticker", "ts"]).reset_index(drop=True)
 

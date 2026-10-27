@@ -189,8 +189,8 @@ fee + half-spread (42 %) are the ones where the disagreement is noise, as the 0.
 **Reading.** On the ladder the fine-tuned head carries information the market has not fully priced: statistically real
 on val, dev and the distribution score, about 0.3 % of the market's Brier (0.8 % of its log score), concentrated at
 5–30 minutes to the close. It is too small to earn the taker fee and spread; a maker execution (posting at the bid,
-no fee on this series' maker side if any, fill risk unmeasured) is the only route by which it could be money, and that
-needs the fills archive and a queue model, not a candle backtest.
+no fee on this series' maker side if any, fill risk unmeasured) was the only route by which it could be money. Tested
+below with the fills archive and two queue bounds: it loses even under the optimistic bound.
 
 ### Sampling cube at 60 bars (`cube_ft1h_sample_kalshi`, 2026-10-27, user's go)
 
@@ -229,6 +229,52 @@ path. The sampled centre is uncorrelated with the head's logit (0.003) and with 
 is unusable beyond ~20 bars (collapsing width, drifting centre), and what it says at shorter horizons the head already
 says better. The ladder result stands as the head's alone: 0.3 % Brier, 0.8 % log score, no money after fee and spread.
 
+### Maker execution on the ladders (fills archive + queue bounds, 2026-10-27, user's go, no GPU)
+
+The one route left for the 0.3 % edge: rest orders instead of crossing the spread. Public inputs only: Kalshi's
+`/markets/trades` endpoint (26.3 M taker prints over the 66 retained days, pulled at 3 req/s, `data/kalshi_ladder/fills/`)
+and the ladder table. Simulator `backtest/maker.py`: at every minute and strike with a two-sided quote, rest a yes bid
+or yes ask priced off the frozen val blend A (bid at the blend minus a tick, ask at the blend plus a tick, only where
+that improves on the book), size $100 / price, fill against the taker prints of the following minute, one position per
+market, hold to settlement. The public data has no book depth, so queue position is unknown and the truth is bracketed:
+
+- **improve** — post one tick inside the spread, first at a new level; any taker print at or through the price fills
+  us. Optimistic: assumes no other maker reacts and that the taker would have taken our level.
+- **join** — post at the existing best; only prints strictly through the level fill us (we are behind an unknown queue).
+  Pessimistic.
+
+Controls posted the same way: the EWMA null pricer (model-free prices) and the mid (pure market making off the book,
+measuring the adverse selection any resting order eats on this book). Maker fee 0 and 0.0175·C·P(1−P) both (the series
+endpoint does not say whether KXBTCD charges makers; the fee-schedule page refuses automated reads). Day-level stats as
+in the taker backtest (block bootstrap, hurdle $150/day).
+
+| dev (frozen blend A, 34 days, $/day) | improve | join |
+|---|---|---|
+| blend, 1 tick, no maker fee | −38 (91 fills/day, hit 0.71, −1.3 ¢/share, lb95 −92) | −122 (183 fills/day, hit 0.67, −1.5 ¢, lb95 −237) |
+| blend, with maker fee | −47 | −142 |
+| blend, 2-tick margin | +8 (54/day, lb95 −39) | −87 |
+| blend, h 5–30 only | +37 (60/day, lb95 −18) | +33 (140/day, lb95 −57) |
+| null pricer | +9 (113/day, hit 0.39) | −366 (hit 0.38) |
+| null pricer, h 5–30 | +50 (lb95 −20) | −144 |
+| mid (pure market making) | +3 (1.8 fills/day) | −149 (106/day, −3.0 ¢/share, lb95 −237) |
+
+Val (in-sample for the blend, 31 days): blend improve +49/day (lb95 −52; −1.5 with h 5–30), join −74; null −57 / −292;
+mid −5 / −121. Fill delay median 4 s (improve) to 20 s (join) after posting; the blend's resting price differs from
+the book at 8,384 of the dev markets.
+
+What the numbers say. (1) Even the optimistic bound loses on dev (−$38/day, lb95 −$92), and the pessimistic one loses
+three times as much; the hurdle is +$150. (2) Joining the queue at the mid loses $149/day at −3 ¢/share: the prints
+that trade through a level on this book are informed, and that adverse selection is ten times the head's edge
+(0.9 ¢ median disagreement, 0.3 % Brier). The blend's prices are far better than the null's (hit 0.71 vs 0.39 at the
+same posting rule) and still do not cover it. (3) The only positive cells are the h 5–30 window, where the null
+pricer posting the same way does as well or better (+50 vs +37) and val flips sign (−1.5): that is the window, not the
+model, and it is noise (lb95 negative everywhere). (4) The maker fee question is moot: it moves the result by $10–20/day
+in the wrong direction.
+
+**Reading.** Maker execution does not turn the ladder edge into money. The optimistic fill model already loses, so no
+queue model, book recorder or fee ruling can rescue it; the resting-order flow on KXBTCD is informed enough that a 0.3 %
+distribution edge is far below the cost of being hit. This closes the last untested route on the ladders.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -243,4 +289,4 @@ About $19 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB
 
 ## Verdict (validation)
 
-The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars).
+The plan's gate for the next step (Kronos-base, E2) required the model coefficient's CI to exclude zero beside the market on validation. It does not, for the zero-shot model, the frozen-backbone head, or the jointly fine-tuned small model. The hypothesis that Kronos's conditional distribution of the next 1–15 minutes carries information the market has not priced is **not supported** on this data; the research repo's prior (the market embeds a near-exact nowcast and more) stands. The market-conditioned head (option 2) reaches the same conclusion from the other direction: given the market price, the fine-tuned model's full hidden state adds nothing on held-out days. Dev was opened once, for Kalshi KXBTC15M with the frozen pipeline (user decision): the frozen blend is 0.0004 Brier worse than the market's yes-mid on the 7 days with quotes and the backtest loses about $200 per day at $100 clips. The market is the better pricer on both venues; the venue was not the problem. The hourly Polymarket market (60-minute horizon, 85 days, head retrained for h ≤ 60) gives the same answer: the head equals the null pricer and adds nothing beside the market, with the backbone frozen or jointly fine-tuned on 60-bar targets. The Kalshi KXBTCD strike ladders are the one place the head adds anything beside the market: a 0.3 % Brier / 0.8 % log-score gain, real on val and dev, and not enough to pay the taker fee and spread. The sampled 60-bar distribution adds nothing to that head (coefficient zero in every form; the free-running sampler collapses beyond ~20 bars). Maker execution of that edge, simulated against 26 M public taker prints, loses under the optimistic fill bound (−$38/day on dev) and more under the pessimistic one (−$122/day); the resting-order flow on the ladders is informed (joining at the mid loses 3 ¢/share), so there is no route left from the ladder edge to money.
