@@ -419,6 +419,37 @@ day, below the $150/day hurdle by construction and gone once the market term is 
 **Reading.** Both venues track spot within the minute and neither leads the other at the executable price; the cross-venue
 gap is sampling staleness plus odd-lot prints at the start of the hour. Item 1 closed, $0 spent.
 
+### Item 4 — Polymarket hourly BTC over the full 17-month history (≈ $1.1 GPU, negative for money, positive for information)
+
+`ft_small_1h_early` (the ft_small_1h recipe with the kline cutoff moved to 2025-05-27, 91 min on an A40) and
+`cube_early_direct_1h` (direct logits + hidden state every minute, 2025-05-28 → 2026-10-24, 515 days); public data
+from `pm_long.py` extended back to the series' first hour (10,264 more markets, 20.5 M taker orders, 2 h on the Mac).
+Table `data/tables/hourly_early.parquet`: 725,877 decision rows in 12,303 markets, 641,754 with an executable print
+(labels agree with the Binance candle in 12,303 / 12,303). Splits fixed in the plan: **val 2025-05-28 → 2026-02-28**
+(277 days, 6,595 markets), **dev 2026-03-01 → 10-26** (238 days, 5,688 markets; this family's dev had been opened once
+before on 08-07 → 10-24, so the overlap is exploratory).
+
+**Val (the gate).** Beside the print mid: logit(head) **0.29 [0.15, 0.43]** with the null (null 0.04 [−0.09, 0.18]),
+0.31 [0.20, 0.42] alone; leave-one-day-out Brier 0.16449 vs market 0.16469 (null 0.16590). The 85-day test gave 0.08
+[−0.23, 0.46]; three times the days moved the point estimate up and the interval off zero. First time the plan's
+coefficient gate is met on Polymarket.
+
+**Frozen on dev.** Blend 0.16176 vs market 0.16199 (null 0.16420), paired day-block CI **[−0.00051, +0.00003]**; by
+minutes left: worse at 1–9 (+0.0007), better at 10–59 (−0.0002 to −0.0004). Quarter by quarter (refit coefficient of the
+head, and the frozen blend's gain): 2025Q3 0.34 [0.10, 0.59] / −0.0002; Q4 0.22 [−0.03, 0.46] / −0.0003; 2026Q1 0.36
+[0.12, 0.64] / −0.0006; Q2 0.24 [−0.01, 0.43] / −0.0003; Q3 0.28 [0.04, 0.52] / −0.0001; Q4 (26 days) −0.04 / +0.0001.
+Consistent in sign for 15 of 17 months, 0.1–0.4 % of the market's Brier.
+
+**Backtest (dev, $100 clips at the first print after t+3 s, fee + 1 ¢ margin).** Head + null: +$7.4/day (lb95 −1.8,
+4,952 trades, 1.6 ¢/share, 126/238 days positive), **−$1.3/day with a tick** (lb95 −8.6). Head alone +$11.3 (lb95
++2.9) at the print, −$2.2 with a tick. Null alone +$2.3 / +$1.5. The print's own size caps every trade (the prints
+check is the engine's own fill by construction: 100 %). The information is the same size as on the Kalshi ladders
+(0.0002–0.0003 Brier per day) and, as there, smaller than the spread.
+
+**Reading.** With enough history the hourly head is measurably informative beside Polymarket's price, at the level of
+a few tenths of a percent of Brier, stable across quarters, and worth about one cent a share at the print and nothing
+after a tick. Same verdict as every other venue: information, no money. $1.1 of GPU.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
