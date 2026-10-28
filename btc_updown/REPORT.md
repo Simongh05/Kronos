@@ -450,12 +450,46 @@ check is the engine's own fill by construction: 100 %). The information is the s
 a few tenths of a percent of Brier, stable across quarters, and worth about one cent a share at the print and nothing
 after a tick. Same verdict as every other venue: information, no money. $1.1 of GPU.
 
+### Item 5 — Kronos-base on the KXBTCD ladders (≈ $2.5 GPU, negative: the 4× model adds nothing to the small head)
+
+`ft_base_1h` (the ft_small_1h recipe on `NeoQuasar/Kronos-base`, d832 / 12 layers / 102 M, 30 k steps × 64 bf16, 4.0 h
+on an A40 at 134 samples/s; val head Brier 0.16148 vs the small model's 0.16124 on the same 2,048 windows, val CE 2.568
+vs 2.577) and `cube_base_hidden_kalshi` (832-d hidden state every minute, 08-20 → 10-24, 3 min). Table
+`data/tables/ladder_base.parquet` by `ladder.py` with the base head at every strike (same rows as the small-head table:
+val 424,589 rows / 32 days, dev 433,424 / 34 days; the archive's 10-25 stub of 392 rows is dropped as before). The
+base and small logits correlate at 0.993; raw Brier on the two-sided rows base 0.09212, small 0.09153, market 0.09081.
+Readout `data/backtests/ladder_base/summary.json`.
+
+| | coef(head) [95 % CI, day blocks] | frozen dev per-day Brier gain vs market | dev log-score gain vs market |
+|---|---|---|---|
+| small head (reference, as reported above) | 0.363 [0.011, 0.714] | **0.00024 [0.00002, 0.00047]**, 21/34 days | 0.0142 [0.0093, 0.0196] |
+| **base head** | 0.376 [0.103, 0.694] | **0.00011 [−0.00014, 0.00034]**, 18/34 | 0.0136 [0.0092, 0.0186] |
+| base + small together | base 0.304 [0.027, 0.618], small 0.116 [−0.227, 0.488] | 0.00015 [−0.00010, 0.00039] | — |
+| base − small, paired by day | | **−0.00014 [−0.00026, −0.00001]**, base better on 13/34 days | small − base −0.0006 [−0.0029, 0.0015] |
+
+On val the base head's coefficient is the small head's (h 10–20: 0.52 [0.11, 0.90]; wings: 0.33 [0.00, 0.81]). Frozen on
+dev it is slightly *worse* than the small head, significantly so in the paired per-day comparison, and adding it to the
+small head does not help (the pair's gain is 0.00015 vs the small head's 0.00024). The distribution log score is the
+same for both. Backtests, frozen val calibration on dev, negative in every variant with a tick: per strike −$959/day
+(6,786 trades, −1.1 ¢/share); one trade per ladder −$45/day; h ≤ 30 one per ladder −$45 (lb95 −92); h 10–20 one per
+ladder −$78 (lb95 −126, −1.8 ¢/share; small head −$53). Maker simulator (`backtest/maker.py`, 26 M public prints):
+improve +$22/day (lb95 −56; 3,098 fills; the profit is in h 35–59 where the head has no edge, h 9–20 loses −$457 in
+total) vs the small head's −$38; join −$135/day (lb95 −269) vs −$122; h 5–30 improve −$8 (small +$37, and the null
+pricer posting the same way earned +$50 there, so that window is the venue, not the model); with the 1.75 ¢ maker fee
++$13 (lb95 −65). Within noise of the small head in every mode, and no mode clears zero at the lower bound.
+
+**Reading.** More capacity does not find more in the bars: the base head reproduces the small head's edge (same
+coefficient, same log-score gain) and is marginally worse on the frozen Brier. The ladder edge is what the 1-minute
+history contains beside the market, about 0.3 % of the market's Brier, independent of model size. Item 5 closed,
+≈ $2.5 of GPU (4.1 h), pod `xrus4qaq2dprtn` terminated and verified gone.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
 - E1b: 30,000 steps × 64, joint CE + BCE, 77 min on an A40 (416 samples/s); val CE 2.671 → 2.609; val grid Brier 0.1609 (no better than the probe). Checkpoint: volume `/workspace/runs/ft_small_1m/best`, Mac copy `data/cloud/runs/ft_small_1m/best`.
 - E0: zero-shot small, N = 128 paths, lookback 256, T = 1.0, top_p = 1.0; 25 min per day on an A40; raw path-count Brier 0.169 (worse than the null's 0.150 until calibrated); path dispersion 2.5 bps at h = 1 to 10.6 bps at h = 14.
 - Sampling cube at 60 bars: `ft_small_1h` backbone, 64 paths, 288 points/day, 588 s per day on an A40 (no KV cache; 0.39× E0's per-day time for 0.2 × 0.5 × 4.3 the work), 10.8 h for 66 days; output 413 MB (`data/cloud/cubes/cube_ft1h_sample_kalshi`).
+- ft_base_1h (Kronos-base, 102 M): 30,000 steps × 64 bf16, 4.0 h on an A40 (134 samples/s, 3.1× the small model's step cost); val CE 2.568 vs 2.577, val head Brier 0.16148 vs 0.16124 (small); the 832-d hidden dump over 66 days took 3 min. Checkpoint `data/cloud/runs/ft_base_1h/best`.
 - Controls: tokenizer round-trip, settlement-proxy flip rate and the null-pricer benchmark are in STATUS.md.
 
 ## Spend
