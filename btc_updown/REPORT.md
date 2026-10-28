@@ -483,6 +483,94 @@ coefficient, same log-score gain) and is marginally worse on the frozen Brier. T
 history contains beside the market, about 0.3 % of the market's Brier, independent of model size. Item 5 closed,
 ≈ $2.5 of GPU (4.1 h), pod `xrus4qaq2dprtn` terminated and verified gone.
 
+### Item 2 — Polymarket ETH / SOL / XRP 5-minute markets (Mac only, $0, negative: efficient, not thin)
+
+`pm_long.py` gained the three families (gamma series 10683 / 10686 / 10685, slug `<asset>-updown-5m-<unix start>`, Chainlink
+TWAP-60 regime; gamma publishes no strike or final for them, so labels are gamma's resolved outcome and the strike proxy is
+the Binance 1-min typical price of the bar closing at the window start, which agrees with gamma's outcome on 94–95 % of
+windows, vs 89 % for close-vs-close); windows over each family's life (83,753 markets per asset, 2025-12-18 → 10-27),
+taker orders and executable prints for 2026-08-01 → 10-26 (25,053 windows × 4 decision minutes per asset; 6.7 M / 3.2 M /
+2.2 M orders; data-api paged by day because gamma caps the events offset at 2,000). Table `data/tables/alt5m_<fam>.parquet`
+via `assemble.py` with the EWMA null pricer on `spot_<ASSET>USDT`; readout `data/backtests/pm_alt5m/summary.json`.
+
+**Liquidity census.** Not thin at the minute level: median 232 / 113 / 70 taker orders per window (ETH / SOL / XRP), a
+print in the first two minutes in 98.7 % of windows for all three, median 193 / 77 / 30 shares printed in the first
+decision minute, median window volume $2,531 / $809 / $231. The executable-print coverage at a decision minute is 85 % /
+79 % / 67 %. The scope's stop rule (no print in the first 2 minutes) does not fire.
+
+**Null pricer beside the print mid.** Val = the first 43 priced days (08-01 → 09-12), dev = the last 44 (09-13 → 10-26),
+fixed before the fit. The null's coefficient beside the market is *negative* for all three (ETH −0.10 [−0.15, −0.06],
+SOL −0.05 [−0.08, −0.01], XRP −0.08 [−0.11, −0.04]) with the market's own coefficient 1.10–1.15: given the print mid, the
+vol model points the wrong way, slightly. Frozen on dev: ETH blend − market −0.00009 [−0.00028, +0.00009], SOL −0.00009
+[−0.00024, +0.00006], XRP **−0.00031 [−0.00047, −0.00014]**. A market-only recalibration (coefficient 1.05–1.06 on val)
+gets ETH −0.00001, SOL +0.00005, XRP −0.00011 [−0.00026, +0.00005], so XRP's 0.2 % gain is the null, not the
+sharpening of the mid. Taker backtest at the executable print (engine rule, 1 ¢ margin, $100 clips): ETH −$12/day
+(lb95 −33), SOL −$14 (lb95 −31), XRP +$1.5/day (lb95 −13; +$2.3 with a tick, 802 trades, 1.5 ¢/share, 21/44 days);
+3 ¢ margin: −$9 / −$1 / +$0.05. The prints check is tautological on Polymarket (the executing taker order is inside the
+window and the engine already caps the clip by its size), so the fill-size P&L equals the backtest.
+
+**Reading.** The alt 5m markets are not the Kalshi SOL ladder: they are liquid at the minute, priced as well as the BTC
+ones, and a free vol model finds nothing beside their print mid (XRP: 0.2 % of the Brier, $1.5/day). The GPU gate
+(frozen-dev gain with a CI excluding zero *and* positive fill-size P&L) fails on all three; no fine-tune was run.
+Item 2 closed, $0.
+
+### Item 3 — Kalshi hourly S&P 500 ladders (KXINXU) with equity minute bars (≈ $2.7 GPU, negative)
+
+Data: `data/kalshi_ladder.py --series KXINXU --max-hours 72` (329 events 08-21 → 10-27, 7 per trading day, 60 strikes at
+$5; the events open the evening before so only their last hour is tabled, minutes re-indexed from the close; 388 k
+public prints over 46 days). `data/alpaca_bars.py` (Alpaca Market Data v2, SIP feed, the user's paper key in `.env`)
+built `eq_SPY` and `eq_QQQ` 1-minute bars 2016 → 2026-10-27 (2.2 M / 2.1 M bars, market hours only; a session boundary
+is a gap for the training mask). `ladder.py --basis-mode mul` moves the ladder's strike onto SPY levels with the
+previous event's SPX / SPY ratio (median 10.49, sd 0.02; proxy error of SPX at the close vs SPY × ratio: median 0.7
+index points, p90 2.0, against a $5 strike step). Table `data/tables/ladder_inx.parquet`: 357,119 rows, 261 events,
+39 days; two-sided rows 38 %; median 142 k contracts per event, 118 k in the last hour, 8 two-sided strikes per minute,
+ATM spread 4 ¢ (BTC ladders: 2 ¢).
+
+**Free tests first** (`data/backtests/ladder_inx/free_tests.json`, Mac): null pricer beside the market on val (08-21 →
+09-19, 16 days): coef 0.02 [−0.11, 0.26]; frozen on dev (09-22 → 10-27, 21 days) blend = market (−0.00075 → +0.0020);
+taker backtest −$504/day; static arbitrage (`ladder_arb.py --max-hours 72`): 1 gross crossing in 15,884 ladder-minutes,
+0 net of fees.
+
+**Equity fine-tune** (`ft_small_1m_eq`: the E1b recipe on SPY + QQQ bars, kline cutoff 2026-08-01, 30 k × 64 bf16, 91
+min on an A40 at 350 samples/s, val head Brier 0.1623 on SPY 08-07 → 09-07) and `cube_eq_hidden_inx` (hidden state
+every SPY minute 08-20 → 10-28, 96 files); head applied at every strike (`ladder_inx_head.parquet`, 208 k rows with a
+head, 58 % — the rest fall where the 256-bar lookback crosses a session gap or the minute has no bar). Readout
+`data/backtests/ladder_inx/head_tests.json`, val 27,066 rows / 16 days, dev 41,408 / 21 days:
+
+| fit | coef(head) [95 % CI] | coef(null) | coef(market) | Brier blend LODO / market |
+|---|---|---|---|---|
+| val, market + head + null | **−0.71 [−1.43, −0.19]** | 0.11 [−0.14, 0.62] | 1.71 | 0.1063 / 0.1052 |
+| val, market + head | −0.57 [−0.83, −0.14] | | 1.69 | 0.1058 / 0.1052 |
+| val h 10–20 | −0.54 [−1.18, −0.10] | | | 0.1023 / 0.1015 |
+| dev refit (exploratory) | 0.20 [−0.37, 0.60] | −0.20 | 1.13 | 0.1047 / 0.1034 |
+
+The head's coefficient on val is significantly *negative* beside the market (the head agrees with the null at 0.97
+correlation and is worse than it raw: 0.1102 vs 0.1088 vs market 0.1041), and the fit's market coefficient of 1.7 is
+the 16-day sample overfitting. Frozen on dev the blend is *worse* than the market by 0.0022 Brier (CI [−0.0001,
++0.0052]; +0.0138 in the last 9 minutes); the dev refit's head coefficient includes zero. Backtest, frozen, dev: engine
+rule −$443/day (1,241 trades, −3.2 ¢/share), −$359 with a tick, −$204 at 1 ¢ margin; one fresh trade per ladder −$45/day
+(lb95 −71), h ≤ 30 −$85. Prints check against the 388 k archived prints: 36 % of trades see any print in the next
+minute, 20 % a print at or better than our price, 2.6 % fully fillable; on the fillable quantity −$32/day (1 min) and
+−$130/day (5 min). Gate not met; no Kronos-base run.
+
+**Reading.** On a product where the hourly ladder is thick ($5 steps, 118 k contracts in the last hour) and the
+underlying is an equity index with a 1-minute proxy error of 0.7 points, the fine-tuned equity head carries nothing
+beside the ladder's prices, and the small sample (16 val days, 21 dev days, 7 events a day) is enough to see that the
+sign is wrong. Item 3 closed, ≈ $2.7 of GPU (4.6 h, 2.6 h of which the pod idled waiting for an upload flag the
+launcher failed to write), pod `468v6jipmtmd0y` terminated and verified gone.
+
+### Round 2 verdict
+
+Five tests, four venues, ≈ $6.3 of GPU, none of them money. Beside the executable market price, Kronos's head adds a
+statistically real but tiny amount on the Kalshi BTC ladders (0.3 % of the Brier; the base model adds nothing to the
+small one) and on Polymarket's hourly BTC market over 17 months (coefficient 0.29 on val, frozen dev gain with a CI
+touching zero), and nothing on the S&P ladders (sign wrong), nothing across venues at the executable price, and a free
+vol model finds nothing in the alt 5m markets. Every taker backtest is negative after a tick; the maker route loses on
+the ladders. The round's one positive statistic (the long hourly history) is what the earlier rounds found at smaller
+scale: information the market has already priced to within the fee. The remaining credits ($75.39) are not worth
+spending on more of the same; a different question (not "does the model beat the market" but e.g. a new venue's first
+weeks, where the market is not yet efficient) would need new data, not more GPU.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
@@ -490,9 +578,12 @@ history contains beside the market, about 0.3 % of the market's Brier, independe
 - E0: zero-shot small, N = 128 paths, lookback 256, T = 1.0, top_p = 1.0; 25 min per day on an A40; raw path-count Brier 0.169 (worse than the null's 0.150 until calibrated); path dispersion 2.5 bps at h = 1 to 10.6 bps at h = 14.
 - Sampling cube at 60 bars: `ft_small_1h` backbone, 64 paths, 288 points/day, 588 s per day on an A40 (no KV cache; 0.39× E0's per-day time for 0.2 × 0.5 × 4.3 the work), 10.8 h for 66 days; output 413 MB (`data/cloud/cubes/cube_ft1h_sample_kalshi`).
 - ft_base_1h (Kronos-base, 102 M): 30,000 steps × 64 bf16, 4.0 h on an A40 (134 samples/s, 3.1× the small model's step cost); val CE 2.568 vs 2.577, val head Brier 0.16148 vs 0.16124 (small); the 832-d hidden dump over 66 days took 3 min. Checkpoint `data/cloud/runs/ft_base_1h/best`.
+- ft_small_1m_eq (SPY + QQQ 1-min, E1b recipe): 30,000 steps × 64, 91 min on an A40 (350 samples/s); val CE 2.470, val head Brier 0.1623 on SPY. Checkpoint `data/cloud/runs/ft_small_1m_eq/best`.
 - Controls: tokenizer round-trip, settlement-proxy flip rate and the null-pricer benchmark are in STATUS.md.
 
 ## Spend
+
+Round 2 (2026-10-28): ≈ $6.3 of GPU — `ft_small_1h_early` + cube ≈ $1.1, `ft_base_1h` + cube ≈ $2.5 (4.3 h), `ft_small_1m_eq` + cube ≈ $2.7 (4.6 h incl. 2.6 h idle) — balance **$75.39** (RunPod `clientBalance`, 2026-10-28 after the equity pod); all pods verified gone.
 
 About $19 of GPU time (A40 Secure Cloud at $0.59/h) plus $7/month for the 100 GB volume; balance $81.90 of $100 (RunPod `clientBalance` on 2026-10-27 after the 60-bar sampling cube) after E0 + probe + E1b + the E0 resume pod + the hidden-state dump, a pull pod, the Kalshi cube pod, the hourly probe pod, the hourly fine-tune pod, the Kalshi hidden-dump pod and the 60-bar sampling cube (10.8 h, ≈ $6.4).
 
