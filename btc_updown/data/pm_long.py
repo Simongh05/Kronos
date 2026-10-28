@@ -8,8 +8,9 @@ Families (gamma series ids; windows from the slug):
     btc-1h   series 10114, slug bitcoin-up-or-down-<month>-<d>[-<yyyy>]-<h><am|pm>-et[-candle]; window = the Binance 1 h candle
              starting at that New York hour; settles Up iff candle close >= candle open (Binance BTCUSDT) -> strike/final from
              the local spot_BTCUSDT klines, outcome from gamma's outcomePrices, cross-checked.
-    btc-4h   series 10331, slug btc-updown-4h-<unix start>; Chainlink TWAP-60 at end vs start (strike/final left NaN here).
-    btc-1d   series 41, slug bitcoin-up-or-down-on-<month>-<d>-<yyyy>; noon ET -> noon ET; Binance 1-min close at both ends.
+    btc-4h   series 10331, slug btc-updown-4h-<unix start>; Chainlink TWAP-60 at end vs start; strike/final proxied by the
+             typical price of the Binance 1-min bar before each end (outcome from gamma).
+    btc-1d   series 41, slug bitcoin-up-or-down-on-<month>-<d>[-<yyyy>]; noon ET -> noon ET; Binance 1-min close at both ends.
 
 Outputs under --out (default data/pm_long):
     windows_<family>.parquet        one row per market, same columns as data/labels/windows.parquet (+ volume_usd, outcome_klines)
@@ -60,7 +61,7 @@ FAMILIES = {
 MONTHS = {m.lower(): i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
 
 _HOURLY = re.compile(r"-([a-z]+)-(\d{1,2})(?:-(\d{4}))?-(\d{1,2})-?(am|pm)-et")
-_DAILY = re.compile(r"-on-([a-z]+)-(\d{1,2})-(\d{4})")
+_DAILY = re.compile(r"-on-([a-z]+)-(\d{1,2})(?:-(\d{4}))?$")   # the year appears in the slug only from 2026-03
 
 
 def _month(name: str) -> Optional[int]:
@@ -113,7 +114,16 @@ def window_from_slug(family: str, slug: str, year_hint: Optional[int] = None, en
         mo = _month(mon)
         if mo is None:
             return None
-        we = int(dt.datetime(int(yr), mo, int(day), 12, tzinfo=NY).timestamp())
+        years = [int(yr)] if yr else ([year_hint, year_hint - 1] if year_hint is not None else [])
+        cands = []
+        for year in years:
+            try:
+                cands.append(int(dt.datetime(year, mo, int(day), 12, tzinfo=NY).timestamp()))
+            except ValueError:
+                pass
+        if not cands:
+            return None
+        we = min(cands, key=lambda c: abs(c - end_hint)) if end_hint is not None else cands[0]
         return we - secs, we
     return None
 
@@ -223,6 +233,11 @@ def klines_strike_final(family: str, ws: int, we: int, ts: np.ndarray, x: np.nda
         if i0 < 0 or i1 < 0:
             return np.nan, np.nan
         return float(x[i0, 3]), float(x[i1, 3])          # close of the noon 1-min candle, both ends
+    if family == "btc-4h":
+        i0, i1 = bar(ws - 60), bar(we - 60)
+        if i0 < 0 or i1 < 0:
+            return np.nan, np.nan
+        return float(x[i0, :4].mean()), float(x[i1, :4].mean())  # typical price of the last bar before each end (TWAP-60 proxies)
     if family.endswith("-5m"):
         i0, i1 = bar(ws - 60), bar(we - 60)
         if i0 < 0 or i1 < 0:

@@ -1,0 +1,15 @@
+# Long-horizon test: DirectHead logits for every (j, h) with j + h <= 24 and the hidden state at every HOUR close
+# 2025-03-15 .. 2026-10-24 from ft_small_h1 on the hourly BTCUSDT series. Run with BTC_UPDOWN_BAR_SECONDS=3600.
+exp_name: cube_h1_hidden
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 0.5
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: h1_spot_BTCUSDT, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: /workspace/runs/ft_small_h1/best/model
+  head: /workspace/runs/ft_small_h1/best/head.pt
+cube: {start: "2025-03-15", end: "2026-10-25", stride_s: 3600, pred_len: 24, n_samples: 1, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 256, sampling: false, direct: true, direct_sum_only: false, store_paths: false, dump_hidden: true}

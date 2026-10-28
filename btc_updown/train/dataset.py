@@ -27,7 +27,7 @@ from torch.utils.data import Dataset
 
 FEATURES = ("open", "high", "low", "close", "volume", "amount")
 TIME_FEATURES = ("minute", "hour", "weekday", "day", "month")
-BAR_SECONDS = 60
+BAR_SECONDS = int(os.environ.get("BTC_UPDOWN_BAR_SECONDS", "60"))   # 60 for 1-minute bars; 3600 for the h1_* hourly series
 EPS = 1e-5
 
 
@@ -55,6 +55,12 @@ class SeriesStore:
             raise ValueError(f"{name}: inconsistent lengths x={x.shape} stamp={stamp.shape} ts={ts.shape}")
         if x.shape[1] != 6 or stamp.shape[1] != 5:
             raise ValueError(f"{name}: expected x[N,6] and stamp[N,5], got {x.shape} {stamp.shape}")
+        meta_path = os.path.join(d, "meta.json")
+        if os.path.exists(meta_path):
+            interval = json.load(open(meta_path)).get("interval", "1m")
+            secs = {"1m": 60, "1h": 3600}.get(interval)
+            if secs is not None and secs != BAR_SECONDS:
+                raise ValueError(f"{name}: series interval {interval} but BAR_SECONDS={BAR_SECONDS}; set BTC_UPDOWN_BAR_SECONDS={secs}")
         return cls(name=name, x=x, stamp=stamp, ts=ts)
 
     @classmethod
