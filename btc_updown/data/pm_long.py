@@ -162,12 +162,20 @@ def _month_edges(start: str, end: str):
         d0 = nxt
 
 
+def _day_edges(start: str, end: str):
+    d0 = dt.date.fromisoformat(start); d1 = dt.date.fromisoformat(end)
+    while d0 < d1:
+        yield d0, d0 + dt.timedelta(days=1)
+        d0 += dt.timedelta(days=1)
+
+
 def fetch_markets(http: Http, family: str, start: str, end: str) -> List[dict]:
     """All closed gamma markets of the family's series whose (gamma) endDate falls in [start, end]; paginated by month
     (gamma refuses offsets beyond ~2000)."""
     sid = FAMILIES[family]["series_id"]
     out, seen = [], set()
-    for d0, d1 in _month_edges(start, end):
+    edges = _month_edges(start, end) if FAMILIES[family]["seconds"] >= 3600 else _day_edges(start, end)   # gamma caps offset at 2,000
+    for d0, d1 in edges:
         off = 0
         while True:
             ev = http.get(f"{GAMMA}/events", {"series_id": sid, "closed": "true", "limit": 100, "offset": off,
