@@ -1,0 +1,56 @@
+# Item 5 of SCOPE-ROUND2: the ft_small_1h recipe (joint CE + DirectHead BCE, 60-bar targets, frozen tokenizer) on
+# Kronos-base (d832, 12 layers, 102 M). Same data, steps and batch; ~4-5x the small step cost, one A40 bf16, ~5 h.
+exp_name: ft_base_1h
+run_dir: /workspace/runs/{exp_name}
+expected_hours: 6
+seed: 100
+device: auto
+bf16: true
+
+data:
+  root: /workspace/klines
+  train_series: [spot_BTCUSDC, spot_BTCUSDT, um_BTCUSDT]
+  val_series: [spot_BTCUSDC]
+  lookback: 256
+  predict: 60
+  clip: 5.0
+  train_start: null
+  train_end: "2026-08-01"    # every training window closes before this
+  val_start: "2026-08-07"
+  val_end: "2026-09-07"
+  n_val_windows: 2048
+  num_workers: 6
+
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  tokenizer_revision: null
+  predictor: NeoQuasar/Kronos-base
+  predictor_revision: null
+  freeze_backbone: false
+  direct_head: true
+  head_hidden: 256
+  head_dropout: 0.1
+  head_max_h: 60
+  head_init: null
+
+train:
+  steps: 30000
+  batch_size: 64
+  lr: 4.0e-5
+  head_lr: 1.0e-3
+  betas: [0.9, 0.95]
+  weight_decay: 0.1
+  grad_clip: 3.0
+  pct_start: 0.03
+  div_factor: 10
+  teacher_forcing: false
+  ce_weight: 1.0
+  bce_weight: 1.0
+  log_every: 50
+  val_every: 2500
+  ckpt_every: 2500
+  keep_last: 2
+  val_batch_size: 64
+
+val_labels: null
+val_label_points: 500

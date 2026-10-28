@@ -1,0 +1,15 @@
+# Item 4: DirectHead logits (j + h == 60) and the hidden state every minute of the full Polymarket hourly history
+# 2025-05-28 .. 2026-10-27 from the early-cutoff model ft_small_1h_early.
+exp_name: cube_early_direct_1h
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 1.5
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: spot_BTCUSDC, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: /workspace/runs/ft_small_1h_early/best/model
+  head: /workspace/runs/ft_small_1h_early/best/head.pt
+cube: {start: "2025-05-28", end: "2026-10-28", stride_s: 60, pred_len: 15, n_samples: 1, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 256, sampling: false, direct: true, direct_sum_only: true, store_paths: false, dump_hidden: true}
