@@ -44,11 +44,12 @@ def _read_days(d: str, start: str, end: str, columns=None) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def load_ladders(archive: str, start: str, end: str) -> pd.DataFrame:
-    """Hourly ladders (one row per market) with the previous ladder's settlement attached."""
+def load_ladders(archive: str, start: str, end: str, max_hours: float = 2.0) -> pd.DataFrame:
+    """Hourly ladders (one row per market) with the previous ladder's settlement attached. `max_hours` admits ladders
+    that open long before the close (KXINXU opens the evening before); only their last 59 minutes are tabled."""
     m = _read_days(os.path.join(archive, "markets"), start, end)
     m = m.drop_duplicates("ticker")                 # a ladder closing exactly at midnight is listed on both day files
-    m = m[(m["hours"] <= 2.0) & m["expiration_value"].notna() & m["result"].isin(["yes", "no"])].copy()
+    m = m[(m["hours"] <= max_hours) & m["expiration_value"].notna() & m["result"].isin(["yes", "no"])].copy()
     ev = m.groupby("event_ticker").agg(open_time=("open_time", "first"), close_time=("close_time", "first"),
                                        exp=("expiration_value", "first")).sort_values("close_time")
     ev["prev_close"] = ev["close_time"].shift(1)
@@ -75,7 +76,7 @@ def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int]
         if ev not in set(lad["event_ticker"]):
             continue
         row0 = lad[lad["event_ticker"] == ev].iloc[0]
-        o = int(row0["open_time"]); ref = row0["prev_exp"]
+        c_end = int(row0["close_time"]); ref = row0["prev_exp"]
         if not np.isfinite(ref):
             ref = lad.loc[g["ticker"].iloc[g["volume"].to_numpy().argmax()], "strike"] if "volume" in g else np.nan
         for tk, gg in g.groupby("ticker", sort=False):
@@ -92,7 +93,7 @@ def book_rows(candles: pd.DataFrame, ladders: pd.DataFrame, max_k: Optional[int]
             b = b.ffill()
             b = b[b["bid"].notna()]                    # age = minutes since the last real candle (0 = fresh)
             b["ticker"] = tk; b["event_ticker"] = ev; b["k"] = k
-            b["t"] = o + 60 * b.index.to_numpy()
+            b["t"] = c_end - 60 * (60 - b.index.to_numpy())      # m = minute of the last hour before the close
             out.append(b.reset_index())
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
@@ -175,11 +176,16 @@ def apply_samples(table: pd.DataFrame, cube_dir: str) -> pd.DataFrame:
 
 
 def build(archive: str, klines: str, series: str, start: str, end: str, max_k: Optional[int], hidden: Optional[str],
-          head: Optional[str], halflife_min: float = 60.0, cube: Optional[str] = None, default_basis: float = DEFAULT_BASIS) -> pd.DataFrame:
-    lad = load_ladders(archive, start, end)
+          head: Optional[str], halflife_min: float = 60.0, cube: Optional[str] = None, default_basis: float = DEFAULT_BASIS,
+          max_hours: float = 2.0, basis_mode: str = "add") -> pd.DataFrame:
+    lad = load_ladders(archive, start, end, max_hours)
     step = strike_step(lad)
-    cand = _read_days(os.path.join(archive, "candles"), start, end, columns=["ticker", "event_ticker", "m", "bid", "ask", "px", "volume"])
-    cand = cand.drop_duplicates(["ticker", "m"])
+    cand = _read_days(os.path.join(archive, "candles"), start, end, columns=["ticker", "event_ticker", "t", "m", "bid", "ask", "px", "volume"])
+    if max_hours > 2.0:   # long-lived ladders: re-index the candles by the minute of the last hour before the close
+        close = lad.drop_duplicates("event_ticker").set_index("event_ticker")["close_time"]
+        cand["m"] = (60 - (cand["event_ticker"].map(close) - cand["t"]) // 60).astype("Int64")
+        cand = cand[cand["m"].notna()]; cand["m"] = cand["m"].astype(int)
+    cand = cand.drop(columns="t").drop_duplicates(["ticker", "m"])
     b = book_rows(cand, lad, max_k, step)
     if b.empty:
         return b
@@ -197,10 +203,17 @@ def build(archive: str, klines: str, series: str, start: str, end: str, max_k: O
     kf = kline_features(store, tbl["t"].to_numpy(), halflife_min=halflife_min)
     tbl = tbl.merge(kf, on="t", how="left")
     tpp = tp_at(store, tbl["prev_close"].to_numpy(dtype=float))
-    tbl["basis"] = tbl["prev_exp"] - tbl["prev_close"].map(lambda x: tpp.get(int(x), np.nan) if np.isfinite(x) else np.nan)
-    tbl["basis_src"] = np.where(tbl["basis"].notna(), "prev_settle", "default")
-    tbl["basis"] = tbl["basis"].fillna(default_basis)
-    tbl["strike_series"] = tbl["strike_eff"] - tbl["basis"]
+    prev_tp = tbl["prev_close"].map(lambda x: tpp.get(int(x), np.nan) if np.isfinite(x) else np.nan)
+    if basis_mode == "mul":   # index vs ETF proxy (SPX / SPY): a ratio, unknown -> the table's median ratio
+        tbl["basis"] = tbl["prev_exp"] / prev_tp
+        tbl["basis_src"] = np.where(tbl["basis"].notna(), "prev_settle", "median")
+        tbl["basis"] = tbl["basis"].fillna(tbl["basis"].median())
+        tbl["strike_series"] = tbl["strike_eff"] / tbl["basis"]
+    else:
+        tbl["basis"] = tbl["prev_exp"] - prev_tp
+        tbl["basis_src"] = np.where(tbl["basis"].notna(), "prev_settle", "default")
+        tbl["basis"] = tbl["basis"].fillna(default_basis)
+        tbl["strike_series"] = tbl["strike_eff"] - tbl["basis"]
     tbl["k_final"] = ((tbl["strike"] - tbl["expiration_value"]) / step).round().astype(int)
     tbl["p_null"] = null_prob(tbl["close_t"].to_numpy(), tbl["strike_series"].to_numpy(), tbl["sigma_ewma"].to_numpy(),
                               tbl["h"].to_numpy().astype(float))
@@ -230,9 +243,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--hidden", default=None); ap.add_argument("--head", default=None)
     ap.add_argument("--cube", default=None, help="sampling cube run_dir (tp_samples/) at pred_len >= 60")
     ap.add_argument("--default-basis", type=float, default=DEFAULT_BASIS, help="basis when the previous ladder's settlement is unknown (BTC: -14; alts: 0)")
+    ap.add_argument("--max-hours", type=float, default=2.0, help="admit ladders that live up to this long (KXINXU: 72); only their last hour is tabled")
+    ap.add_argument("--basis-mode", choices=["add", "mul"], default="add", help="settlement basis: additive (BRTI - Binance) or a ratio (SPX / SPY)")
     ap.add_argument("--out", required=True)
     a = ap.parse_args(argv)
-    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head, cube=a.cube, default_basis=a.default_basis)
+    t = build(a.archive, a.klines, a.series, a.start, a.end, a.max_k, a.hidden, a.head, cube=a.cube, default_basis=a.default_basis,
+              max_hours=a.max_hours, basis_mode=a.basis_mode)
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     t.to_parquet(a.out, index=False)
     print({"rows": int(len(t)), "ladders": int(t["event_ticker"].nunique()) if len(t) else 0, "days": int(t["label_day"].nunique()) if len(t) else 0,
