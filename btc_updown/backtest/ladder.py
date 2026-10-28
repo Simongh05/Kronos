@@ -39,7 +39,12 @@ DEFAULT_BASIS = -14.0        # BRTI - Binance BTCUSDC, measured 2026-10-18..24 (
 
 def _read_days(d: str, start: str, end: str, columns=None) -> pd.DataFrame:
     files = [f for f in sorted(glob.glob(os.path.join(d, "*.parquet"))) if start <= os.path.basename(f)[:10] < end]
-    frames = [pd.read_parquet(f, columns=columns) for f in files]
+    frames = []
+    for f in files:
+        try:
+            frames.append(pd.read_parquet(f, columns=columns))
+        except Exception:                       # a day with no markets is written as an empty, column-less file
+            continue
     frames = [f for f in frames if len(f)]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 

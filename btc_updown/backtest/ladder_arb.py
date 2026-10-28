@@ -111,6 +111,8 @@ def main():
             continue
         c = pd.read_parquet(f)
         mk = pd.read_parquet(os.path.join(a.archive, "markets", f"{day}.parquet"))
+        if len(c) == 0 or len(mk) == 0 or "event_ticker" not in c or "event_ticker" not in mk:   # weekend / holiday
+            continue
         hours = dict(zip(mk["event_ticker"], mk["hours"]))
         close = dict(zip(mk["event_ticker"], mk["close_time"])) if a.max_hours > 2.0 else None
         hourly = c[c["event_ticker"].map(hours).fillna(99) <= a.max_hours]

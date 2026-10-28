@@ -1,10 +1,10 @@
-"""US equity 1-minute bars from Alpaca Market Data (free "Basic" plan, IEX feed) into the kline SeriesStore layout
+"""US equity 1-minute bars from Alpaca Market Data (free "Basic" plan; the consolidated SIP feed is served for history) into the kline SeriesStore layout
 (SCOPE-ROUND2 item 3: SPY and QQQ as the settlement proxies for the Kalshi S&P 500 / Nasdaq-100 hourly ladders).
 
     python -m btc_updown.data.alpaca_bars --symbols SPY QQQ --start 2016-01-01 --end 2026-10-28
 
 Keys: ALPACA_KEY / ALPACA_SECRET in /Users/streetteam/Kronos/.env (never printed, never committed). Endpoint
-GET https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe=1Min&feed=iex&adjustment=raw&start=&end=&limit=10000
+GET https://data.alpaca.markets/v2/stocks/{symbol}/bars?timeframe=1Min&feed=sip&adjustment=raw&start=&end=&limit=10000
 paged by page_token; 200 requests/minute on the free plan. Bars are UTC with `t` = bar open; written as
 data/klines/eq_<SYMBOL>/{bars.parquet, x.f32.npy, stamp.i16.npy, ts.i64.npy, meta.json} with amount = volume x vwap.
 Market hours only: sessions are separated by gaps, which the training dataset's contiguity mask rejects across.
@@ -42,10 +42,10 @@ def _env():
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": sec}
 
 
-def fetch(symbol: str, start: str, end: str, headers: dict, min_interval: float = 0.32) -> pd.DataFrame:
+def fetch(symbol: str, start: str, end: str, headers: dict, min_interval: float = 0.32, feed: str = "sip") -> pd.DataFrame:
     rows: List[dict] = []; token: Optional[str] = None; n = 0
     while True:
-        params = {"timeframe": "1Min", "feed": "iex", "adjustment": "raw", "start": f"{start}T00:00:00Z", "end": f"{end}T00:00:00Z", "limit": 10000}
+        params = {"timeframe": "1Min", "feed": feed, "adjustment": "raw", "start": f"{start}T00:00:00Z", "end": f"{end}T00:00:00Z", "limit": 10000}
         if token:
             params["page_token"] = token
         for attempt in range(6):
@@ -67,25 +67,25 @@ def fetch(symbol: str, start: str, end: str, headers: dict, min_interval: float 
         return pd.DataFrame(columns=BAR_COLUMNS)
     b = pd.DataFrame(rows)
     out = pd.DataFrame({
-        "ts": (pd.to_datetime(b["t"], utc=True).astype("int64") // 10**9).astype(np.int64),
+        "ts": ((pd.to_datetime(b["t"], utc=True) - pd.Timestamp(0, tz="UTC")) // pd.Timedelta(seconds=1)).astype(np.int64),
         "open": b["o"].astype(float), "high": b["h"].astype(float), "low": b["l"].astype(float), "close": b["c"].astype(float),
         "volume": b["v"].astype(float), "amount": (b["v"].astype(float) * b["vw"].astype(float)),
     })
     return out[BAR_COLUMNS].drop_duplicates("ts").sort_values("ts").reset_index(drop=True)
 
 
-def build(symbol: str, start: str, end: str, out: Path, force: bool, headers: dict) -> dict:
+def build(symbol: str, start: str, end: str, out: Path, force: bool, headers: dict, feed: str = "sip") -> dict:
     sdir = out / f"eq_{symbol}"
     old = pd.DataFrame(columns=BAR_COLUMNS)
     if (sdir / "bars.parquet").exists() and not force:
         old = pd.read_parquet(sdir / "bars.parquet")
         if len(old):
             start = max(start, dt.datetime.fromtimestamp(int(old["ts"].max()), dt.timezone.utc).strftime("%Y-%m-%d"))
-    new = fetch(symbol, start, end, headers)
+    new = fetch(symbol, start, end, headers, feed=feed)
     bars = pd.concat([old, new], ignore_index=True).drop_duplicates("ts", keep="last").sort_values("ts").reset_index(drop=True)
     bars = bars[(bars[["open", "high", "low", "close"]] > 0).all(axis=1)]
     ts = bars["ts"].to_numpy(dtype=np.int64)
-    meta = {"series": f"eq_{symbol}", "market": "us_equity", "symbol": symbol, "interval": "1m", "source": "alpaca iex v2 bars",
+    meta = {"series": f"eq_{symbol}", "market": "us_equity", "symbol": symbol, "interval": "1m", "source": f"alpaca v2 bars, feed {feed}",
             "code_version": "btc_updown.data.alpaca_bars/1.0.0", "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "first_ts": dt.datetime.fromtimestamp(int(ts[0]), dt.timezone.utc).isoformat() if len(ts) else None,
             "last_ts": dt.datetime.fromtimestamp(int(ts[-1]), dt.timezone.utc).isoformat() if len(ts) else None,
@@ -99,10 +99,11 @@ def main(argv=None):
     ap.add_argument("--symbols", nargs="+", default=["SPY", "QQQ"])
     ap.add_argument("--start", default="2016-01-01"); ap.add_argument("--end", default=dt.date.today().isoformat())
     ap.add_argument("--out", type=Path, default=Path("data/klines")); ap.add_argument("--force", action="store_true")
+    ap.add_argument("--feed", choices=["sip", "iex"], default="sip", help="sip = consolidated tape (works on the free plan for history); iex = IEX only")
     a = ap.parse_args(argv)
     headers = _env()
     for s in a.symbols:
-        print(json.dumps(build(s, a.start, a.end, a.out, a.force, headers)), flush=True)
+        print(json.dumps(build(s, a.start, a.end, a.out, a.force, headers, a.feed)), flush=True)
 
 
 if __name__ == "__main__":

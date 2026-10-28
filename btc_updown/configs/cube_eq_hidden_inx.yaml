@@ -1,0 +1,15 @@
+# Item 3: equity-model hidden state (d512) + direct logits every minute over the Kalshi KXINXU archive window on SPY;
+# the head is then applied at every S&P ladder strike on the Mac (ladder.py --hidden/--head).
+exp_name: cube_eq_hidden_inx
+run_dir: /workspace/cubes/{exp_name}
+expected_hours: 0.3
+seed: 100
+device: auto
+bf16: true
+data: {root: /workspace/klines, series: eq_SPY, lookback: 256, clip: 5.0}
+model:
+  tokenizer: NeoQuasar/Kronos-Tokenizer-base
+  predictor: /workspace/runs/ft_small_1m_eq/best/model
+  head: /workspace/runs/ft_small_1m_eq/best/head.pt
+cube: {start: "2026-08-20", end: "2026-10-28", stride_s: 60, pred_len: 15, n_samples: 1, T: 1.0, top_p: 1.0, top_k: 0,
+       batch_points: 256, sampling: false, direct: true, direct_sum_only: true, store_paths: false, dump_hidden: true}
