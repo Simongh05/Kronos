@@ -246,10 +246,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--min-interval", type=float, default=0.2)
     ap.add_argument("--fill-strikes", type=int, default=5, help="ATM +/- this many strikes get their fills")
+    ap.add_argument("--max-hours", type=float, default=2.0, help="treat events up to this life as 'hourly' (KXINXU opens the evening before: use 72)")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args(argv)
-    global SERIES
-    SERIES = a.series
+    global SERIES, HOURLY_MAX_H
+    SERIES = a.series; HOURLY_MAX_H = a.max_hours
     if a.out is None:
         a.out = "data/kalshi_ladder" if a.series == "KXBTCD" else f"data/kalshi_ladder_{a.series}"
     if a.cmd == "report":

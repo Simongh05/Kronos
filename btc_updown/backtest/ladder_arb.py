@@ -18,7 +18,7 @@ import argparse
 import glob
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -53,8 +53,10 @@ def _violations(g: pd.DataFrame, bid_col: str, ask_col: str) -> pd.DataFrame:
     return out
 
 
-def scan_day(c: pd.DataFrame, hours: Dict[str, float], max_hours: float = 2.0) -> Dict[str, pd.DataFrame]:
+def scan_day(c: pd.DataFrame, hours: Dict[str, float], max_hours: float = 2.0, close: Optional[Dict[str, int]] = None) -> Dict[str, pd.DataFrame]:
     c = c[c["event_ticker"].map(hours).fillna(99) <= max_hours]
+    if close is not None:   # events that live longer than an hour: m = minute of the last hour before the close
+        c = c.assign(m=60 - (c["event_ticker"].map(close) - c["t"]) // 60)
     c = c[(c["m"] >= 1) & (c["m"] <= 59)]
     res: Dict[str, List[pd.DataFrame]] = {"close": [], "minute": [], "ffill": []}
     for ev, g in c.groupby("event_ticker", sort=False):
@@ -99,6 +101,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--archive", default="data/kalshi_ladder"); ap.add_argument("--out", default="data/backtests/ladder_arb")
     ap.add_argument("--start", default="2026-08-20"); ap.add_argument("--end", default="2026-10-25")
+    ap.add_argument("--max-hours", type=float, default=2.0, help="event life treated as a ladder (72 for KXINXU, which opens the evening before)")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     allv = {"close": [], "minute": [], "ffill": []}; n_min = 0; n_ev = 0
@@ -109,9 +112,12 @@ def main():
         c = pd.read_parquet(f)
         mk = pd.read_parquet(os.path.join(a.archive, "markets", f"{day}.parquet"))
         hours = dict(zip(mk["event_ticker"], mk["hours"]))
-        hourly = c[c["event_ticker"].map(hours).fillna(99) <= 2.0]
+        close = dict(zip(mk["event_ticker"], mk["close_time"])) if a.max_hours > 2.0 else None
+        hourly = c[c["event_ticker"].map(hours).fillna(99) <= a.max_hours]
+        if close is not None:
+            hourly = hourly[(hourly["event_ticker"].map(close) - hourly["t"]) // 60 <= 59]
         n_ev += hourly["event_ticker"].nunique(); n_min += hourly[["event_ticker", "t"]].drop_duplicates().shape[0]
-        r = scan_day(c, hours)
+        r = scan_day(c, hours, a.max_hours, close)
         fp = os.path.join(a.archive, "fills", f"{day}.parquet")
         fills = pd.read_parquet(fp) if os.path.exists(fp) else pd.DataFrame()
         if len(fills) and "ticker" not in fills:

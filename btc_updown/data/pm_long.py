@@ -48,9 +48,14 @@ EXEC_LO, EXEC_HI = 3, 30
 MAX_OFFSET = 10_000  # data-api: "max historical trades offset of 10000 exceeded"
 
 FAMILIES = {
-    "btc-1h": {"series_id": 10114, "seconds": 3600, "regime": "binance-1h-candle"},
-    "btc-4h": {"series_id": 10331, "seconds": 14400, "regime": "btc-4h-twap-60"},
-    "btc-1d": {"series_id": 41, "seconds": 86400, "regime": "binance-1m-noon-et"},
+    "btc-1h": {"series_id": 10114, "seconds": 3600, "regime": "binance-1h-candle", "settle": "spot_BTCUSDT"},
+    "btc-4h": {"series_id": 10331, "seconds": 14400, "regime": "btc-4h-twap-60", "settle": "spot_BTCUSDT"},
+    "btc-1d": {"series_id": 41, "seconds": 86400, "regime": "binance-1m-noon-et", "settle": "spot_BTCUSDT"},
+    # alt-coin 5-minute families (SCOPE-ROUND2 item 2): slug <asset>-updown-5m-<unix start>, Chainlink TWAP-60 at the end vs
+    # the price at the start; strike/final proxied by the Binance 1-min close at the start and the end bar's typical price
+    "eth-5m": {"series_id": 10683, "seconds": 300, "regime": "chainlink-twap-60", "settle": "spot_ETHUSDT"},
+    "sol-5m": {"series_id": 10686, "seconds": 300, "regime": "chainlink-twap-60", "settle": "spot_SOLUSDT"},
+    "xrp-5m": {"series_id": 10685, "seconds": 300, "regime": "chainlink-twap-60", "settle": "spot_XRPUSDT"},
 }
 MONTHS = {m.lower(): i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
 
@@ -66,7 +71,7 @@ def window_from_slug(family: str, slug: str, year_hint: Optional[int] = None, en
     """(window_start, window_end) epoch seconds from the slug; None if it does not parse. `year_hint` / `end_hint`
     (gamma endDate year and epoch) disambiguate hourly slugs that carry no year."""
     secs = FAMILIES[family]["seconds"]
-    if family == "btc-4h":
+    if family == "btc-4h" or family.endswith("-5m"):
         try:
             ws = int(slug.rsplit("-", 1)[1])
         except (ValueError, IndexError):
@@ -210,10 +215,16 @@ def klines_strike_final(family: str, ws: int, we: int, ts: np.ndarray, x: np.nda
         if i0 < 0 or i1 < 0:
             return np.nan, np.nan
         return float(x[i0, 3]), float(x[i1, 3])          # close of the noon 1-min candle, both ends
+    if family.endswith("-5m"):
+        i0, i1 = bar(ws - 60), bar(we - 60)
+        if i0 < 0 or i1 < 0:
+            return np.nan, np.nan
+        return float(x[i0, 3]), float(x[i1, :4].mean())  # last close before the start; typical price of the final bar (TWAP-60 proxy)
     return np.nan, np.nan
 
 
-def build_windows(http: Http, family: str, start: str, end: str, klines_root: str, settle_series: str = "spot_BTCUSDT") -> pd.DataFrame:
+def build_windows(http: Http, family: str, start: str, end: str, klines_root: str, settle_series: Optional[str] = None) -> pd.DataFrame:
+    settle_series = settle_series or FAMILIES[family].get("settle", "spot_BTCUSDT")
     ms = fetch_markets(http, family, start, end)
     ts = np.load(os.path.join(klines_root, settle_series, "ts.i64.npy"), mmap_mode="r")
     x = np.load(os.path.join(klines_root, settle_series, "x.f32.npy"), mmap_mode="r")

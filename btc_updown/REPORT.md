@@ -380,6 +380,45 @@ like BTC's ladder.
 ETH's ladder is as efficient as BTC's; SOL's ladder is mispriced on paper by a free vol model and the mispricing
 cannot be collected because the market is ~200× thinner than BTC's and the mispriced quotes do not trade.
 
+## Round 2 (SCOPE-ROUND2.md, 2026-10-28, user's go): five remaining tests
+
+### Item 1 — Cross-venue: Kalshi KXBTCD ladder vs Polymarket hourly BTC (Mac only, negative)
+
+`backtest/cross_venue.py`, 66 overlapping days (08-20 → 10-24; val to 09-20, dev from 09-21, both exploratory: dev has
+been opened on both families before). For every Polymarket hourly window and minute, the ladder's yes-mid interpolated
+in logit space at the Polymarket strike in BRTI terms (USDC/USDT ratio at the open + the ladder basis) gives a
+Kalshi-implied P(up); 87 % of the 87 k rows have one (median bracketing gap one $100 step, median ladder width 1 ¢).
+
+**Lead-lag is a sampling artifact.** Polymarket's CLOB price history (fidelity 1 min) is a point 0–60 s before t, the
+ladder candle closes at t. Regressing the pm point's next-minute change on the gap to the Kalshi mid gives R² 0.49–0.65
+and a 0.3–0.7 coefficient, but the gap to the EWMA null (spot at t) explains the same move, and with the Kalshi candle
+one minute older than the pm point the Kalshi coefficient turns negative (−0.41 val, −0.20 dev) while the null's stays
+0.66–0.70. The pm history is simply stale relative to spot; nothing about Kalshi. Kalshi's own next-minute change is
+unpredictable from the pm gap (R² 0.001).
+
+**Beside the executable Polymarket print, Kalshi adds nothing.** With the market term = the mid of the first Up-buy and
+Down-buy prints after t+3 s (the price one can actually trade), val coefficients: logit(market) 1.00, logit(kalshi)
+**0.03 [−0.42, 0.48]**, logit(null) 0.00 [−0.30, 0.33]; leave-one-day-out Brier 0.1805 vs market 0.1795 (worse); frozen
+on dev 0.18225 vs 0.18235, CI [−0.0004, +0.0002]; zero trades clear fee + 1 ¢ in the backtest, on val or dev.
+
+**The one positive number, and why it is not money.** Fitted against the stale pm history instead (market weight 0.2,
+Kalshi 0.6–0.8), the blend is essentially the ladder's probability, and executing it against the next Polymarket print
+gives +$43–49/day on dev (lb95 +9 to +16, +$23 with a tick for the kalshi+null blend, +$49 / lb95 +14 with a tick for
+Kalshi alone; 22–23 of 34 days positive). Anatomy of those 749 trades: 57 % in the first eight minutes of the hour,
+where the pm market still sits near 50 ¢ while the ladder (tracking spot) is 5 ¢ away; the executing prints are odd
+lots (median 10 shares, 90th percentile 57), so the $100 clips fill to a median of 10 shares and the whole strategy
+deploys **$303 of notional per day**; the next same-side print after ours is 1 ¢ *lower* (the market did not move
+toward Kalshi within two minutes); the gain comes from the ≤ 45 ¢ side (hit 32–46 %, 4.6–8.7 ¢/share), the 45–70 ¢
+trades earn 0.3 ¢/share. A pick-off of small off-mid prints at the open of the hour, capacity a few hundred dollars a
+day, below the $150/day hurdle by construction and gone once the market term is the fresh print.
+
+**Kalshi mirror.** Ladder rows |k| ≤ 2 with the pm mid mapped to the strike through the null's shape: val coef
+0.10 [−0.01, 0.21], frozen dev blend − market [−0.0004, +0.0001]; backtest −$42/day (−$109 with a tick); prints check
+−$106 to −$123/day on the fillable quantity. Polymarket's price carries nothing for the ladder either.
+
+**Reading.** Both venues track spot within the minute and neither leads the other at the executable price; the cross-venue
+gap is sampling staleness plus odd-lot prints at the start of the hour. Item 1 closed, $0 spent.
+
 ## Training facts
 
 - E1b-probe: 6,000 steps × 128, frozen pretrained small backbone, 10 min on an A40; val grid Brier plateaued at 0.161 from step 1,000.
